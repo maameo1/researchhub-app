@@ -44,11 +44,22 @@ export async function callAI(key, prompt, mt) {
   throw new Error('Use the specific API functions (genSummaryProxy, etc.) for proxy mode')
 }
 
-// Proxy helper — calls /api/ routes on the server
+// Proxy helper — calls /api/ routes with auth token
 async function proxyCall(endpoint, body) {
+  // Get auth token
+  let token = null
+  try {
+    const { getToken } = await import('./supabase.js')
+    token = await getToken()
+  } catch {}
+  if (!token) throw new Error('Please sign in to use AI features.')
+
   const r = await fetch('/api/' + endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token,
+    },
     body: JSON.stringify(body),
   })
   if (!r.ok) {

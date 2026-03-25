@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { PK, AK, ZUK, ZKK, GK, gid, ld, sv, genSummary, genGap, genWeeklyRecs, extractPdf, parseBib, parseCsv } from './utils'
+import { supabase, getUser, getUsage } from './supabase'
 import Settings from './components/Settings'
 import DetailView from './components/DetailView'
 import GraphView from './components/GraphView'
 import GapView from './components/GapView'
 import LibraryView from './components/LibraryView'
+import AuthModal from './components/AuthModal'
 
 export default function App() {
   const [papers, setPapers] = useState(() => ld(PK, []))
@@ -17,7 +19,7 @@ export default function App() {
   const [selected, setSelected] = useState(null)
   const [search, setSearch] = useState('')
   const [filterTags, setFilterTags] = useState([])
-  const [readFilter, setReadFilter] = useState('all') // all | read | unread
+  const [readFilter, setReadFilter] = useState('all')
   const [tab, setTab] = useState('library')
   const [error, setError] = useState(null)
   const [pdf, setPdf] = useState(null)
@@ -32,6 +34,38 @@ export default function App() {
   const [zotMsg, setZotMsg] = useState('')
   const [weeklyRecs, setWeeklyRecs] = useState(() => ld('rh_weekly', null))
   const [weeklyL, setWeeklyL] = useState(false)
+
+  // Auth state
+  const [user, setUser] = useState(null)
+  const [usage, setUsage] = useState(null)
+  const [showAuth, setShowAuth] = useState(false)
+  const [authLoading, setAuthLoading] = useState(true)
+
+  // Check auth on load
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const u = await getUser()
+        setUser(u)
+        if (u) { const us = await getUsage(); setUsage(us) }
+      } catch {}
+      setAuthLoading(false)
+    }
+    checkAuth()
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const u = session?.user || null
+      setUser(u)
+      if (u) { const us = await getUsage(); setUsage(us) }
+      else setUsage(null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // Refresh usage after AI calls
+  async function refreshUsage() {
+    try { const us = await getUsage(); setUsage(us) } catch {}
+  }
 
   // Debounced save — prevents lag during batch summarization
   const saveTimer = useRef(null)
@@ -133,7 +167,7 @@ export default function App() {
       try { const s = await genSummary(apiKey, un[i]); upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p) }
       catch { upd = upd.map(p => p.id === un[i].id ? { ...p, summary: { tldr: (p.abstract || '').slice(0, 100), tags: ['untagged'], key_contributions: [], methods: [], limitations: [], open_questions: [], key_citations_to_follow: [], relevance_to_medical_imaging: '' } } : p) }
     }
-    setPapers(upd); setSumL(false); setLoadingMsg('')
+    setPapers(upd); setSumL(false); setLoadingMsg(''); refreshUsage()
   }
 
   async function runGap() {
@@ -141,7 +175,7 @@ export default function App() {
     setGapL(true); setError(null)
     try {
       const parsed = await genGap(apiKey, papers)
-      setGap(parsed); setTab('gaps')
+      setGap(parsed); setTab('gaps'); refreshUsage()
     } catch (err) {
       setError('Gap analysis failed: ' + (err.message || 'Unknown error'))
     }
@@ -156,6 +190,7 @@ export default function App() {
       parsed.generatedAt = new Date().toISOString()
       setWeeklyRecs(parsed)
       sv('rh_weekly', parsed)
+      refreshUsage()
     } catch (err) { setError('Weekly suggestions failed: ' + err.message) }
     finally { setWeeklyL(false) }
   }
@@ -195,9 +230,14 @@ export default function App() {
           <h1 style={{ fontSize: 26, fontWeight: 400, color: 'var(--text-primary)', letterSpacing: -0.5, margin: 0 }}>Research<span style={{ color: 'var(--accent-green)', fontStyle: 'italic' }}>Hub</span></h1>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'var(--mono)', marginTop: 4 }}>{papers.length} papers</div>
         </div>
-        <button onClick={() => setShowSet(true)} className="btn-sec" style={{ padding: '8px 14px', fontSize: 16 }}>⚙</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={() => setShowAuth(true)} className="btn-sec" style={{ padding: '8px 14px', fontSize: 12, fontFamily: 'var(--mono)', color: user ? 'var(--accent-green-light)' : 'var(--text-muted)' }}>
+            {user ? (user.email.split('@')[0]) : 'Sign In'}
+          </button>
+          <button onClick={() => setShowSet(true)} className="btn-sec" style={{ padding: '8px 14px', fontSize: 16 }}>⚙</button>
+        </div>
       </header>
-      {!apiKey && <div style={{ padding: '10px 32px', background: '#0f1520', borderBottom: '1px solid #1a2a3a', fontSize: 13, color: 'var(--accent-blue)', fontFamily: 'var(--mono)' }}>AI features powered by Claude · Add your own key in ⚙ for self-hosted mode</div>}
+      {!user && <div style={{ padding: '10px 32px', background: '#1a1520', borderBottom: '1px solid #2a2535', fontSize: 13, color: 'var(--accent-purple)', fontFamily: 'var(--mono)', cursor: 'pointer' }} onClick={() => setShowAuth(true)}>Sign in for AI summaries, gap analysis, and more — free account, no credit card</div>}
       {(zotL || zotMsg) && <div style={{ padding: '10px 32px', background: '#0f1520', borderBottom: '1px solid #1a2a3a', fontSize: 13, color: 'var(--accent-blue)', fontFamily: 'var(--mono)' }}>{zotL ? '⟳ ' : '✓ '}{zotMsg}</div>}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' }}>
         {['library', 'graph', 'gaps'].map(t => <button key={t} onClick={() => setTab(t)} style={{ padding: '10px 24px', fontSize: 13, fontFamily: 'var(--mono)', color: (tab === t || (tab === 'detail' && t === 'library')) ? 'var(--accent-green-light)' : 'var(--text-faint)', background: (tab === t || (tab === 'detail' && t === 'library')) ? '#0f1a15' : 'transparent', cursor: 'pointer', border: 'none', borderBottom: (tab === t || (tab === 'detail' && t === 'library')) ? '2px solid var(--accent-green)' : '2px solid transparent', textTransform: 'capitalize' }}>{t === 'gaps' ? 'Gap Analysis' : t === 'graph' ? 'Relationships' : t}</button>)}
@@ -216,17 +256,18 @@ export default function App() {
   )
 
   const settingsEl = <Settings show={showSet} onClose={() => setShowSet(false)} apiKey={apiKey} setApiKey={setApiKey} zUid={zUid} setZUid={setZUid} zKey={zKey} setZKey={setZKey} zotImp={zotImp} zotL={zotL} papers={papers} setPapers={setPapers} gap={gap} setGap={setGap} />
+  const authEl = <AuthModal show={showAuth} onClose={() => setShowAuth(false)} user={user} usage={usage} onAuthChange={async () => { const u = await getUser(); setUser(u); if (u) { const us = await getUsage(); setUsage(us) } else setUsage(null) }} />
 
   // ── Route views ────────────────────────────────────────────────────────
   if (tab === 'detail' && selected) {
-    return (<div>{headerEl}<DetailView paper={selected} apiKey={apiKey} onBack={() => { speechSynthesis.cancel(); setSpeaking(false); setTab('library') }} onDelete={del} onToggleRead={togRead} onToggleStar={togStar} onUpdateNotes={updNotes} onUpdateFigure={updFigure} onUpdateSchematic={updSchematic} speaking={speaking} onSpeak={spk} />{settingsEl}</div>)
+    return (<div>{headerEl}<DetailView paper={selected} apiKey={apiKey} onBack={() => { speechSynthesis.cancel(); setSpeaking(false); setTab('library') }} onDelete={del} onToggleRead={togRead} onToggleStar={togStar} onUpdateNotes={updNotes} onUpdateFigure={updFigure} onUpdateSchematic={updSchematic} speaking={speaking} onSpeak={spk} />{settingsEl}{authEl}</div>)
   }
   if (tab === 'graph') {
-    return (<div>{headerEl}<GraphView papers={papers} onSelect={id => { const p = papers.find(x => x.id === id); if (p) { setSelected(p); setTab('detail') } }} />{settingsEl}</div>)
+    return (<div>{headerEl}<GraphView papers={papers} onSelect={id => { const p = papers.find(x => x.id === id); if (p) { setSelected(p); setTab('detail') } }} />{settingsEl}{authEl}</div>)
   }
   if (tab === 'gaps') {
-    return (<div>{headerEl}<GapView papers={papers} gap={gap} gapL={gapL} onRunGap={runGap} />{settingsEl}</div>)
+    return (<div>{headerEl}<GapView papers={papers} gap={gap} gapL={gapL} onRunGap={runGap} />{settingsEl}{authEl}</div>)
   }
 
-  return (<div>{headerEl}<LibraryView papers={papers} filtered={filtered} allTags={allTags} filterTags={filterTags} setFilterTags={setFilterTags} readFilter={readFilter} setReadFilter={setReadFilter} search={search} setSearch={setSearch} unsum={unsum} sumL={sumL} loadingMsg={loadingMsg} onSumAll={sumAll} onSelect={p => { setSelected(p); setTab('detail') }} onToggleStar={togStar} showStarred={showStarred} setShowStarred={setShowStarred} weeklyRecs={weeklyRecs} weeklyL={weeklyL} onGenWeekly={genWeekly} />{settingsEl}</div>)
+  return (<div>{headerEl}<LibraryView papers={papers} filtered={filtered} allTags={allTags} filterTags={filterTags} setFilterTags={setFilterTags} readFilter={readFilter} setReadFilter={setReadFilter} search={search} setSearch={setSearch} unsum={unsum} sumL={sumL} loadingMsg={loadingMsg} onSumAll={sumAll} onSelect={p => { setSelected(p); setTab('detail') }} onToggleStar={togStar} showStarred={showStarred} setShowStarred={setShowStarred} weeklyRecs={weeklyRecs} weeklyL={weeklyL} onGenWeekly={genWeekly} />{settingsEl}{authEl}</div>)
 }
