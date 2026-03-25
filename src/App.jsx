@@ -137,7 +137,10 @@ export default function App() {
         }
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
-      let sum = null; try { sum = await genSummary(apiKey, md) } catch {}
+      let sum = null
+      if (user) {
+        try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary failed:', e.message) }
+      }
       const np = { id: gid(), ...md, summary: sum, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
       setPapers(prev => [np, ...prev]); setInput(''); setPdf(null); if (fRef.current) fRef.current.value = ''
       setSelected(np); setTab('detail')
@@ -199,17 +202,25 @@ export default function App() {
 
   async function sumAll() {
     const un = papers.filter(p => !p.summary); if (!un.length) return
+    if (!user && !apiKey) { setError('Please sign in to use AI summaries.'); setShowAuth(true); return }
     setSumL(true); setError(null); let upd = [...papers]
     for (let i = 0; i < un.length; i++) {
       setLoadingMsg('Summarizing ' + (i + 1) + '/' + un.length + ': ' + un[i].title.slice(0, 35) + '...')
-      try { const s = await genSummary(apiKey, un[i]); upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p) }
-      catch { upd = upd.map(p => p.id === un[i].id ? { ...p, summary: { tldr: (p.abstract || '').slice(0, 100), tags: ['untagged'], key_contributions: [], methods: [], limitations: [], open_questions: [], key_citations_to_follow: [], relevance_to_medical_imaging: '' } } : p) }
+      try {
+        const s = await genSummary(apiKey, un[i])
+        upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p)
+      } catch (e) {
+        if (e.message?.includes('limit reached')) { setError(e.message); break }
+        // Fallback: create basic summary from abstract
+        upd = upd.map(p => p.id === un[i].id ? { ...p, summary: { tldr: (p.abstract || '').slice(0, 100), tags: ['untagged'], key_contributions: [], methods: [], limitations: [], open_questions: [], key_citations_to_follow: [], relevance_to_medical_imaging: '' } } : p)
+      }
     }
     setPapers(upd); setSumL(false); setLoadingMsg(''); refreshUsage()
   }
 
   async function runGap() {
     if (papers.length < 2) { setError('Need 2+ papers'); return }
+    if (!user && !apiKey) { setError('Please sign in to use gap analysis.'); setShowAuth(true); return }
     setGapL(true); setError(null)
     try {
       const parsed = await genGap(apiKey, papers)
@@ -222,6 +233,7 @@ export default function App() {
 
   async function genWeekly() {
     if (papers.length < 3) { setError('Need 3+ papers for reading suggestions.'); return }
+    if (!user && !apiKey) { setError('Please sign in for weekly reading suggestions.'); setShowAuth(true); return }
     setWeeklyL(true); setError(null)
     try {
       const parsed = await genWeeklyRecs(apiKey, papers)
