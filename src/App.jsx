@@ -102,29 +102,39 @@ export default function App() {
         if (dm) {
           setLoadingMsg('DOI...')
           try {
-            const r = await fetch('https://api.crossref.org/works/' + encodeURIComponent(dm[1]))
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 15000)
+            const r = await fetch('https://api.crossref.org/works/' + encodeURIComponent(dm[1]), { signal: controller.signal })
+            clearTimeout(timeout)
             if (!r.ok) throw new Error('DOI not found in Crossref')
             const di = (await r.json()).message
             md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] }
           } catch (e) {
-            throw new Error('DOI lookup failed: ' + e.message + '. Try pasting the paper title instead.')
+            const msg = e.name === 'AbortError' ? 'DOI lookup timed out. Crossref may be slow — try pasting the paper title instead.' : 'DOI lookup failed: ' + e.message + '. Try pasting the paper title instead.'
+            throw new Error(msg)
           }
         } else if (am) {
           setLoadingMsg('arXiv...')
           try {
-            const r = await fetch('https://export.arxiv.org/api/query?id_list=' + am[1])
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 15000)
+            const r = await fetch('https://export.arxiv.org/api/query?id_list=' + am[1], { signal: controller.signal })
+            clearTimeout(timeout)
             if (!r.ok) throw new Error('arXiv API error')
             const x = new DOMParser().parseFromString(await r.text(), 'text/xml')
             const e = x.querySelector('entry')
             if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
             md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
           } catch (e) {
-            throw new Error('arXiv lookup failed: ' + e.message + '. Try pasting the paper title instead.')
+            throw new Error(e.name === 'AbortError' ? 'arXiv lookup timed out. Try again or paste the paper title.' : 'arXiv lookup failed: ' + e.message + '. Try pasting the paper title instead.')
           }
         } else {
           setLoadingMsg('Searching...')
           try {
-            const r = await fetch('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue')
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 15000)
+            const r = await fetch('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue', { signal: controller.signal })
+            clearTimeout(timeout)
             if (r.status === 429) throw new Error('Search rate limited. Wait a minute and try again.')
             if (!r.ok) throw new Error('Search failed')
             const d = await r.json()
@@ -132,7 +142,7 @@ export default function App() {
             const p = d.data[0]
             md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId }
           } catch (e) {
-            throw new Error(e.message.includes('rate') ? e.message : 'Search failed: ' + e.message)
+            throw new Error(e.name === 'AbortError' ? 'Search timed out. Try a shorter search term.' : e.message.includes('rate') ? e.message : 'Search failed: ' + e.message)
           }
         }
       }
