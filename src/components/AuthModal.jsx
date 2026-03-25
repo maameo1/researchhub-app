@@ -35,7 +35,10 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
 
   async function handleSignOut() {
     try { await signOut() } catch {}
-    // Force clear state regardless of signOut result
+    // Force clear all Supabase auth from localStorage
+    try {
+      Object.keys(localStorage).filter(k => k.includes('supabase') || k.includes('sb-')).forEach(k => localStorage.removeItem(k))
+    } catch {}
     onAuthChange()
     onClose()
     window.location.reload()
@@ -85,7 +88,7 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
             </a>
           )}
 
-          <button onClick={handleSignOut} className="btn-sec" style={{ width: '100%', textAlign: 'center', color: 'var(--accent-red)', borderColor: '#3a1a1a' }}>Sign Out</button>
+          <button onClick={(e) => { e.stopPropagation(); handleSignOut() }} style={{ width: '100%', textAlign: 'center', color: '#d19090', background: 'transparent', border: '1px solid #3a1a1a', borderRadius: 6, padding: '10px 16px', fontSize: 14, cursor: 'pointer', fontFamily: 'var(--sans)' }}>Sign Out</button>
         </div>
       </div>
     )
