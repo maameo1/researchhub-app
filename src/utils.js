@@ -25,41 +25,37 @@ export function getPdfUrl(p) {
   return null
 }
 
-// Claude API — uses server proxy when no key is set, direct API when key exists
+// ── Direct Claude API call (personal/self-hosted mode) ──────────────────
 export async function callAI(key, prompt, mt) {
-  if (key) {
-    // Direct mode (self-hosted with own key)
-    const cleanKey = key.replace(/[^\x20-\x7E]/g, '').trim()
-    if (!cleanKey) throw new Error('API key appears invalid. Re-enter it in Settings.')
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': cleanKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: mt || 1500, messages: [{ role: 'user', content: prompt }] })
-    })
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || 'API error ' + r.status) }
-    const d = await r.json()
-    return (d.content || []).map(b => b.text || '').join('').replace(/```json/g, '').replace(/```/g, '').trim()
-  }
-  // Proxy mode — no key needed, server handles it
-  throw new Error('Use the specific API functions (genSummaryProxy, etc.) for proxy mode')
+  if (!key) throw new Error('API key required. Add it in Settings.')
+  const cleanKey = key.replace(/[^\x20-\x7E]/g, '').trim()
+  if (!cleanKey) throw new Error('API key appears invalid. Re-enter it in Settings.')
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': cleanKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: mt || 1500, messages: [{ role: 'user', content: prompt }] })
+  })
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || 'API error ' + r.status) }
+  const d = await r.json()
+  return (d.content || []).map(b => b.text || '').join('').replace(/```json/g, '').replace(/```/g, '').trim()
 }
 
-// Proxy helper — calls /api/ routes with auth token
+// ── Server proxy call (deployed mode — no user API key needed) ──────────
 async function proxyCall(endpoint, body) {
-  // Get auth token
   let token = null
   try {
     const { getToken } = await import('./supabase.js')
     token = await getToken()
-  } catch {}
+  } catch (e) {}
   if (!token) throw new Error('Please sign in to use AI features.')
-
   const r = await fetch('/api/' + endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + token,
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
     body: JSON.stringify(body),
   })
   if (!r.ok) {
@@ -69,7 +65,7 @@ async function proxyCall(endpoint, body) {
   return r.json()
 }
 
-// Summary — works with key (direct) or without (proxy)
+// ── Summary — direct if key provided, proxy if not ──────────────────────
 export async function genSummary(key, p) {
   if (key) {
     return JSON.parse(await callAI(key, `Research paper analyst. Return ONLY JSON.
@@ -81,108 +77,84 @@ For key_citations_to_follow provide REAL papers as "Author et al., Title (Year)"
   return result.summary
 }
 
-// Schematic — works with key (direct) or without (proxy)
-export async function genSchematic(key, p) {
-  if (key) {
-    const svgText = await callAI(key, `You are an expert scientific diagram designer. Create a CLEAN, PROFESSIONAL SVG pipeline/architecture diagram for this paper.
-
-Title: ${p.title}
-Abstract: ${p.abstract || 'N/A'}
-Methods: ${p.summary?.methods?.join(', ') || 'N/A'}
-Key contributions: ${p.summary?.key_contributions?.join(', ') || 'N/A'}
-
-STRICT RULES - follow exactly:
-1. Return ONLY raw SVG code. No markdown, no backticks, no explanation.
-2. Start with <svg viewBox="0 0 700 350" xmlns="http://www.w3.org/2000/svg"> and end with </svg>
-3. LAYOUT: Use a clear LEFT-TO-RIGHT flow with 3-6 main stages. Space boxes evenly.
-4. BOXES: Use <rect> with rx="8" ry="8", width 100-130, height 50-65.
-5. COLORS for boxes (use different ones for different stages):
-   - Input/Data: fill="#1a3329" stroke="#5b8a72" (green)
-   - Processing/Model: fill="#1a2535" stroke="#7eb8da" (blue)
-   - Key Method: fill="#251a35" stroke="#9070c4" (purple)
-   - Output/Result: fill="#2e2a1a" stroke="#d1c490" (gold)
-   - Loss/Training: fill="#2e1a1a" stroke="#d19090" (red)
-6. TEXT: Use fill="#e8e8e8" font-family="Arial,sans-serif".
-   - Stage labels: font-size="12" font-weight="bold" centered in boxes
-   - Sub-labels below: font-size="9" fill="#8a9bb5"
-7. ARROWS: Use <line> or <path> with stroke="#4a5a6a" stroke-width="2" and marker-end with a proper arrowhead. Define arrowhead in <defs>.
-8. Add a title at top: font-size="14" fill="#e8e8e8" font-weight="bold"
-9. BACKGROUND: Add <rect width="700" height="350" fill="#0e1318" rx="8"/>
-10. Make it look like a real conference paper figure - clean, professional, readable.
-11. Vertically center the pipeline boxes around y=160.
-12. Add thin connector labels on arrows if relevant (font-size="8" fill="#6a7b8f").`, 3000)
-    return svgText.trim()
-  }
-  const result = await proxyCall('schematic', {
-    title: p.title, abstract: p.abstract,
-    methods: p.summary?.methods?.join(', ') || '',
-    contributions: p.summary?.key_contributions?.join(', ') || ''
-  })
-  return result.schematic
-}
-
-// Gap analysis — works with key (direct) or without (proxy)
+// ── Gap analysis ────────────────────────────────────────────────────────
 export async function genGap(key, papers) {
   if (key) {
     const sm = papers.slice(0, 20).map((p, i) => {
       const s = p.summary
-      const info = s ? ('TLDR: ' + (s.tldr || '') + '. Methods: ' + (s.methods || []).join(', ') + '. Limitations: ' + (s.limitations || []).join(', '))
+      const info = s ? ('TLDR: ' + (s.tldr || '') + '. Methods: ' + (s.methods || []).join(', '))
         : ('Abstract: ' + (p.abstract || 'N/A').slice(0, 200))
       return '[' + (i + 1) + '] "' + p.title + '" - ' + info
     }).join('\n')
-    const txt = await callAI(key, 'You are a research gap analyst. Analyze these ' + papers.length + ' papers and identify research gaps.\n\n' + sm + '\n\nReturn ONLY valid JSON with no other text:\n{"themes":["theme1","theme2"],"gaps":["specific gap 1","specific gap 2"],"contradictions":["contradiction if any"],"suggested_directions":["direction 1","direction 2"],"missing_baselines":["missing comparison 1"],"suggested_search_queries":["arxiv query to fill gap 1"]}', 1200)
-    return JSON.parse(txt)
+    return JSON.parse(await callAI(key, 'You are a research gap analyst. Analyze these ' + papers.length + ' papers.\n\n' + sm + '\n\nReturn ONLY valid JSON:\n{"themes":["..."],"gaps":["..."],"contradictions":["..."],"suggested_directions":["..."],"missing_baselines":["..."],"suggested_search_queries":["..."]}', 1200))
   }
-  const result = await proxyCall('gap', { papers: papers.slice(0, 20).map(p => ({ title: p.title, abstract: p.abstract, summary: p.summary ? { tldr: p.summary.tldr, methods: p.summary.methods, limitations: p.summary.limitations } : null })) })
+  const result = await proxyCall('gap', { papers: papers.slice(0, 20).map(p => ({ title: p.title, abstract: p.abstract, summary: p.summary })) })
   return result.gap
 }
 
-// Weekly reading — works with key (direct) or without (proxy)
+// ── Weekly reading suggestions ──────────────────────────────────────────
 export async function genWeeklyRecs(key, papers) {
   const readRecently = papers.filter(p => p.readStatus === 'read').slice(0, 5)
   const unread = papers.filter(p => p.readStatus !== 'read')
-  const allTags = [...new Set(papers.flatMap(p => p.summary?.tags || []))]
-
+  const allTagsList = [...new Set(papers.flatMap(p => p.summary?.tags || []))]
   if (key) {
-    const prompt = `You are a PhD research reading advisor. Based on this researcher's library, suggest a focused weekly reading plan.
-
+    const prompt = `You are a PhD research reading advisor. Suggest a focused weekly reading plan.
 RECENTLY READ (${readRecently.length}):
-${readRecently.map(p => '- "' + p.title + '" [Tags: ' + (p.summary?.tags || []).join(', ') + ']').join('\n')}
-
-UNREAD IN LIBRARY (${unread.length}):
-${unread.slice(0, 20).map(p => '- "' + p.title + '" [Tags: ' + (p.summary?.tags || []).join(', ') + '] TLDR: ' + (p.summary?.tldr || p.abstract?.slice(0, 80) || 'N/A')).join('\n')}
-
-ALL TAGS: ${allTags.join(', ')}
-
+${readRecently.map(p => '- "' + p.title + '" [' + (p.summary?.tags || []).join(', ') + ']').join('\n')}
+UNREAD (${unread.length}):
+${unread.slice(0, 20).map(p => '- "' + p.title + '" [' + (p.summary?.tags || []).join(', ') + '] ' + (p.summary?.tldr || p.abstract?.slice(0, 80) || 'N/A')).join('\n')}
+ALL TAGS: ${allTagsList.join(', ')}
 Return ONLY valid JSON:
-{"from_library":[{"title":"exact title","reason":"why","priority":"high/medium"}],"new_suggestions":[{"search_query":"query","topic":"topic","reason":"why"}],"theme_of_the_week":"theme","reading_order_tip":"tip"}`
-    const txt = await callAI(key, prompt, 1500)
-    return JSON.parse(txt)
+{"from_library":[{"title":"exact title","reason":"why","priority":"high/medium"}],"new_suggestions":[{"search_query":"query","topic":"topic","reason":"why"}],"theme_of_the_week":"theme","reading_order_tip":"tip"}
+Rules: Pick 3-5 from UNREAD. Suggest 2-3 new search queries. Priority high=foundational, medium=deepening.`
+    return JSON.parse(await callAI(key, prompt, 1500))
   }
-
   const result = await proxyCall('weekly', {
-    readRecently: readRecently.map(p => ({ title: p.title, tags: p.summary?.tags || [] })),
-    unread: unread.slice(0, 20).map(p => ({ title: p.title, tags: p.summary?.tags || [], tldr: p.summary?.tldr || '' })),
-    allTags
+    readRecently: readRecently.map(p => ({ title: p.title, tags: p.summary?.tags })),
+    unread: unread.slice(0, 20).map(p => ({ title: p.title, tags: p.summary?.tags, tldr: p.summary?.tldr })),
+    allTags: allTagsList,
   })
   return result.weekly
 }
 
-// PDF extraction — works with key (direct) or without (proxy)
-export async function extractPdf(key, base64) {
+// ── PDF extraction ──────────────────────────────────────────────────────
+export async function extractPdf(key, b64) {
   if (key) {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': key.replace(/[^\x20-\x7E]/g, '').trim(), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }, { type: 'text', text: 'Return ONLY JSON: {"title":"...","authors":["..."],"abstract":"...","published":"YYYY","venue":"..."}' }] }] })
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }, { type: 'text', text: 'Return ONLY JSON: {"title":"...","authors":["..."],"abstract":"...","published":"YYYY","venue":"..."}' }] }] })
     })
+    if (!resp.ok) throw new Error('PDF extraction failed')
     return JSON.parse((await resp.json()).content?.map(b => b.text || '').join('').replace(/```json|```/g, '').trim())
   }
-  const result = await proxyCall('extract-pdf', { pdfBase64: base64 })
+  const result = await proxyCall('extract-pdf', { pdfBase64: b64 })
   return result.metadata
 }
 
-// BibTeX parser
+// ── Schematic generation ────────────────────────────────────────────────
+export async function genSchematic(key, p) {
+  const prompt = `You are an expert scientific diagram designer. Create a CLEAN, PROFESSIONAL SVG pipeline diagram.
+Title: ${p.title}
+Abstract: ${p.abstract || 'N/A'}
+Methods: ${p.summary?.methods?.join(', ') || 'N/A'}
+Key contributions: ${p.summary?.key_contributions?.join(', ') || 'N/A'}
+RULES:
+1. Return ONLY raw SVG. No markdown, no backticks.
+2. <svg viewBox="0 0 700 350" xmlns="http://www.w3.org/2000/svg">
+3. LEFT-TO-RIGHT flow, 3-6 stages.
+4. BOXES: <rect> rx="8" ry="8" width 100-130 height 50-65.
+5. COLORS: Input fill="#1a3329" stroke="#5b8a72", Processing fill="#1a2535" stroke="#7eb8da", Key fill="#251a35" stroke="#9070c4", Output fill="#2e2a1a" stroke="#d1c490"
+6. TEXT: fill="#e8e8e8" font-family="Arial,sans-serif" labels font-size="12" bold
+7. ARROWS: stroke="#4a5a6a" stroke-width="2" with arrowhead in <defs>
+8. BACKGROUND: <rect width="700" height="350" fill="#0e1318" rx="8"/>
+9. Center boxes around y=160.`
+  if (key) return (await callAI(key, prompt, 3000)).trim()
+  const result = await proxyCall('schematic', { title: p.title, abstract: p.abstract, methods: p.summary?.methods?.join(', '), contributions: p.summary?.key_contributions?.join(', ') })
+  return result.schematic
+}
+
+// ── BibTeX parser (unchanged) ───────────────────────────────────────────
 export function parseBib(text) {
   const entries = []
   text.split(/\n@/).map((b, i) => i === 0 ? b : '@' + b).forEach(block => {
@@ -195,7 +167,7 @@ export function parseBib(text) {
   return entries
 }
 
-// CSV parser
+// ── CSV parser (unchanged) ──────────────────────────────────────────────
 export function parseCsv(text) {
   const l = text.split('\n'); if (l.length < 2) return []
   const h = l[0].split(',').map(x => x.trim().replace(/^"|"$/g, '').toLowerCase())
@@ -218,7 +190,7 @@ export function parseCsv(text) {
   return entries
 }
 
-// Compute paper relationships
+// ── Relationships (unchanged) ───────────────────────────────────────────
 export function computeRelationships(papers) {
   const rels = []
   const stopwords = new Set(['a','an','the','of','for','and','in','on','with','to','from','by','using','based','deep','learning','network','method','model','image','segmentation','analysis','approach'])
@@ -243,80 +215,32 @@ export function computeRelationships(papers) {
   return rels.sort((a, b) => b.strength - a.strength)
 }
 
-// Compute clusters using union-find on connected papers
 export function computeClusters(papers, rels) {
   if (!papers.length) return []
-  // Union-Find
   const parent = {}
   papers.forEach(p => { parent[p.id] = p.id })
   function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] } return x }
   function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
-
-  // Connect papers that share relationships
-  for (const r of rels) {
-    if (r.strength >= 1) union(r.a, r.b)
-  }
-
-  // Group papers by cluster root
+  for (const r of rels) { if (r.strength >= 1) union(r.a, r.b) }
   const groups = {}
-  for (const p of papers) {
-    const root = find(p.id)
-    if (!groups[root]) groups[root] = []
-    groups[root].push(p)
-  }
-
-  // Build cluster objects with labels
-  const clusters = Object.values(groups)
-    .filter(g => g.length >= 2) // only clusters with 2+ papers
-    .map(group => {
-      // Find shared tags across cluster
-      const tagCounts = {}
-      group.forEach(p => (p.summary?.tags || []).forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1 }))
-      const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(e => e[0])
-
-      // Find shared methods
-      const methodCounts = {}
-      group.forEach(p => (p.summary?.methods || []).forEach(m => { const k = m.toLowerCase(); methodCounts[k] = (methodCounts[k] || 0) + 1 }))
-      const topMethods = Object.entries(methodCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(e => e[0])
-
-      // Generate cluster name from top tags/methods
-      const nameParts = topTags.length > 0 ? topTags.slice(0, 2) : topMethods.slice(0, 2)
-      const name = nameParts.length > 0 ? nameParts.join(' + ') : 'Group of ' + group.length + ' papers'
-
-      // Find internal relationships
-      const groupIds = new Set(group.map(p => p.id))
-      const internalRels = rels.filter(r => groupIds.has(r.a) && groupIds.has(r.b))
-
-      // Collect all reasons
-      const allReasons = new Set()
-      internalRels.forEach(r => r.reasons.forEach(reason => allReasons.add(reason)))
-
-      return {
-        name,
-        papers: group,
-        tags: topTags,
-        methods: topMethods,
-        reasons: [...allReasons].slice(0, 6),
-        size: group.length,
-      }
-    })
-    .sort((a, b) => b.size - a.size)
-
-  // Also find "bridge" papers — papers connected to multiple clusters
+  for (const p of papers) { const root = find(p.id); if (!groups[root]) groups[root] = []; groups[root].push(p) }
+  const clusters = Object.values(groups).filter(g => g.length >= 2).map(group => {
+    const tagCounts = {}; group.forEach(p => (p.summary?.tags || []).forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1 }))
+    const topTags = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(e => e[0])
+    const methodCounts = {}; group.forEach(p => (p.summary?.methods || []).forEach(m => { const k = m.toLowerCase(); methodCounts[k] = (methodCounts[k] || 0) + 1 }))
+    const topMethods = Object.entries(methodCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(e => e[0])
+    const nameParts = topTags.length > 0 ? topTags.slice(0, 2) : topMethods.slice(0, 2)
+    const name = nameParts.length > 0 ? nameParts.join(' + ') : 'Group of ' + group.length + ' papers'
+    const groupIds = new Set(group.map(p => p.id))
+    const internalRels = rels.filter(r => groupIds.has(r.a) && groupIds.has(r.b))
+    const allReasons = new Set(); internalRels.forEach(r => r.reasons.forEach(reason => allReasons.add(reason)))
+    return { name, papers: group, tags: topTags, methods: topMethods, reasons: [...allReasons].slice(0, 6), size: group.length }
+  }).sort((a, b) => b.size - a.size)
   const bridges = []
   for (const p of papers) {
     const connectedClusters = new Set()
-    for (const r of rels) {
-      if (r.a === p.id || r.b === p.id) {
-        const otherId = r.a === p.id ? r.b : r.a
-        const otherCluster = clusters.findIndex(c => c.papers.some(cp => cp.id === otherId))
-        if (otherCluster >= 0) connectedClusters.add(otherCluster)
-      }
-    }
-    if (connectedClusters.size >= 2) {
-      bridges.push({ paper: p, clusters: [...connectedClusters].map(i => clusters[i]?.name || 'Unknown') })
-    }
+    for (const r of rels) { if (r.a === p.id || r.b === p.id) { const otherId = r.a === p.id ? r.b : r.a; const otherCluster = clusters.findIndex(c => c.papers.some(cp => cp.id === otherId)); if (otherCluster >= 0) connectedClusters.add(otherCluster) } }
+    if (connectedClusters.size >= 2) bridges.push({ paper: p, clusters: [...connectedClusters].map(i => clusters[i]?.name || 'Unknown') })
   }
-
   return { clusters, bridges }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { PK, AK, ZUK, ZKK, GK, gid, ld, sv, genSummary, genGap, genWeeklyRecs, extractPdf, parseBib, parseCsv } from './utils'
+import { PK, ZUK, ZKK, GK, gid, ld, sv, genSummary, genGap, genWeeklyRecs, extractPdf, parseBib, parseCsv } from './utils'
 import { supabase, getUser, getUsage } from './supabase'
 import Settings from './components/Settings'
 import DetailView from './components/DetailView'
@@ -10,7 +10,7 @@ import AuthModal from './components/AuthModal'
 
 export default function App() {
   const [papers, setPapers] = useState(() => ld(PK, []))
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(AK) || '')
+  const apiKey = '' // Always use server proxy — users don't need their own key
   const [zUid, setZUid] = useState(() => localStorage.getItem(ZUK) || '')
   const [zKey, setZKey] = useState(() => localStorage.getItem(ZKK) || '')
   const [input, setInput] = useState('')
@@ -39,45 +39,44 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [usage, setUsage] = useState(null)
   const [showAuth, setShowAuth] = useState(false)
-  const [authLoading, setAuthLoading] = useState(true)
 
-  // Check auth on load
   useEffect(() => {
     async function checkAuth() {
-      try {
-        const u = await getUser()
-        setUser(u)
-        if (u) { const us = await getUsage(); setUsage(us) }
-      } catch {}
-      setAuthLoading(false)
+      try { const u = await getUser(); setUser(u); if (u) { const us = await getUsage(); setUsage(us) } } catch {}
     }
     checkAuth()
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      const u = session?.user || null
-      setUser(u)
-      if (u) { const us = await getUsage(); setUsage(us) }
-      else setUsage(null)
+      const u = session?.user || null; setUser(u)
+      if (u) { const us = await getUsage(); setUsage(us) } else setUsage(null)
     })
     return () => subscription.unsubscribe()
   }, [])
 
-  // Refresh usage after AI calls
-  async function refreshUsage() {
-    try { const us = await getUsage(); setUsage(us) } catch {}
-  }
+  async function refreshUsage() { try { const us = await getUsage(); setUsage(us) } catch {} }
 
-  // Debounced save — prevents lag during batch summarization
+  // Debounced save
   const saveTimer = useRef(null)
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      try { sv(PK, papers) }
-      catch (e) { console.warn('Storage save failed:', e) }
-    }, 500)
+    saveTimer.current = setTimeout(() => { try { sv(PK, papers) } catch (e) { console.warn('Storage save failed:', e) } }, 500)
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
   }, [papers])
   useEffect(() => { if (gap) sv(GK, gap) }, [gap])
+
+  // ── Helper: fetch with 15s timeout ─────────────────────────────────────
+  async function fetchWithTimeout(url, options) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15000)
+    try {
+      const r = await fetch(url, { ...options, signal: controller.signal })
+      clearTimeout(timeout)
+      return r
+    } catch (e) {
+      clearTimeout(timeout)
+      if (e.name === 'AbortError') throw new Error('Request timed out. Try pasting the paper title instead.')
+      throw e
+    }
+  }
 
   // ── Add Paper ──────────────────────────────────────────────────────────
   async function addPaper() {
@@ -86,74 +85,51 @@ export default function App() {
     try {
       let md = {}
       if (pdf) {
-        if (!apiKey) setLoadingMsg('Reading PDF via server...')
-        else setLoadingMsg('Reading PDF...')
+        if (!user) { setError('Please sign in to use PDF import.'); setShowAuth(true); setLoading(false); return }
+        setLoadingMsg('Reading PDF...')
         const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = () => rej(new Error('Fail')); r.readAsDataURL(pdf) })
         setLoadingMsg('Extracting...')
         md = await extractPdf(apiKey, b64)
         md.source = 'PDF'; md.sourceId = pdf.name
       } else {
         const t = input.trim()
-        // Check DOI first (before arXiv, because DOIs can contain arXiv-like number patterns)
+        // DOI checked FIRST (before arXiv) — DOIs can contain arXiv-like number patterns
         const dm = t.match(/(10\.\d{4,}\/[^\s]+)/)
-        // Only match arXiv if no DOI found, and input looks like a standalone arXiv ID or arxiv URL
+        // arXiv only if no DOI found, standalone ID or arxiv URL
         const am = !dm && t.match(/(?:arxiv\.org\/abs\/)?(\d{4}\.\d{4,5})(?:v\d+)?$/i)
 
         if (dm) {
           setLoadingMsg('DOI...')
-          try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const r = await fetch('https://api.crossref.org/works/' + encodeURIComponent(dm[1]), { signal: controller.signal })
-            clearTimeout(timeout)
-            if (!r.ok) throw new Error('DOI not found in Crossref')
-            const di = (await r.json()).message
-            md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] }
-          } catch (e) {
-            const msg = e.name === 'AbortError' ? 'DOI lookup timed out. Crossref may be slow — try pasting the paper title instead.' : 'DOI lookup failed: ' + e.message + '. Try pasting the paper title instead.'
-            throw new Error(msg)
-          }
+          const r = await fetchWithTimeout('https://api.crossref.org/works/' + encodeURIComponent(dm[1]))
+          if (!r.ok) throw new Error('DOI not found in Crossref. Try pasting the paper title instead.')
+          const di = (await r.json()).message
+          md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] }
         } else if (am) {
           setLoadingMsg('arXiv...')
-          try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const r = await fetch('https://export.arxiv.org/api/query?id_list=' + am[1], { signal: controller.signal })
-            clearTimeout(timeout)
-            if (!r.ok) throw new Error('arXiv API error')
-            const x = new DOMParser().parseFromString(await r.text(), 'text/xml')
-            const e = x.querySelector('entry')
-            if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
-            md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
-          } catch (e) {
-            throw new Error(e.name === 'AbortError' ? 'arXiv lookup timed out. Try again or paste the paper title.' : 'arXiv lookup failed: ' + e.message + '. Try pasting the paper title instead.')
-          }
+          const r = await fetchWithTimeout('https://export.arxiv.org/api/query?id_list=' + am[1])
+          const x = new DOMParser().parseFromString(await r.text(), 'text/xml')
+          const e = x.querySelector('entry')
+          if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
+          md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
         } else {
           setLoadingMsg('Searching...')
-          try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const r = await fetch('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue', { signal: controller.signal })
-            clearTimeout(timeout)
-            if (r.status === 429) throw new Error('Search rate limited. Wait a minute and try again.')
-            if (!r.ok) throw new Error('Search failed')
-            const d = await r.json()
-            if (!d.data?.length) throw new Error('No papers found. Try a different search term.')
-            const p = d.data[0]
-            md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId }
-          } catch (e) {
-            throw new Error(e.name === 'AbortError' ? 'Search timed out. Try a shorter search term.' : e.message.includes('rate') ? e.message : 'Search failed: ' + e.message)
-          }
+          const r = await fetchWithTimeout('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue')
+          if (r.status === 429) throw new Error('Search rate limited. Wait a minute and try again.')
+          if (!r.ok) throw new Error('Search failed')
+          const d = await r.json()
+          if (!d.data?.length) throw new Error('No papers found. Try a different search term.')
+          const p = d.data[0]
+          md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId }
         }
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
+      // Auto-summarize only if signed in
       let sum = null
-      if (user) {
-        try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary failed:', e.message) }
-      }
+      if (user) { try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary skipped:', e.message) } }
       const np = { id: gid(), ...md, summary: sum, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
       setPapers(prev => [np, ...prev]); setInput(''); setPdf(null); if (fRef.current) fRef.current.value = ''
       setSelected(np); setTab('detail')
+      if (sum) refreshUsage()
     } catch (err) { setError(err.message) }
     finally { setLoading(false); setLoadingMsg('') }
   }
@@ -189,16 +165,12 @@ export default function App() {
         all = [...all, ...items]; setZotMsg('Found ' + all.length + ' items...')
         if (items.length < 50 || all.length > 500) break; start += 50
       }
-      // Filter to paper types locally (more reliable than API filter)
       const types = new Set(['journalArticle', 'conferencePaper', 'preprint', 'book', 'bookSection', 'thesis', 'report', 'manuscript', 'document'])
       const zi = all.filter(i => types.has(i.data?.itemType))
       setZotMsg('Found ' + zi.length + ' papers out of ' + all.length + ' items. Checking duplicates...')
-      
-      const ex = new Set(papers.map(p => p.title?.toLowerCase().trim())); const nw = []
-      let skipped = 0
+      const ex = new Set(papers.map(p => p.title?.toLowerCase().trim())); const nw = []; let skipped = 0
       for (const item of zi) {
-        const d = item.data
-        if (!d.title) continue
+        const d = item.data; if (!d.title) continue
         if (ex.has(d.title.toLowerCase().trim())) { skipped++; continue }
         ex.add(d.title.toLowerCase().trim())
         nw.push({ id: gid(), title: d.title, authors: (d.creators || []).filter(c => c.creatorType === 'author').map(c => ((c.firstName || '') + ' ' + (c.lastName || '')).trim()), abstract: d.abstractNote || '', published: d.date || '', venue: d.publicationTitle || d.proceedingsTitle || d.bookTitle || '', source: 'Zotero', sourceId: d.DOI || d.key, url: d.url || '', summary: null, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null, starred: false })
@@ -212,16 +184,14 @@ export default function App() {
 
   async function sumAll() {
     const un = papers.filter(p => !p.summary); if (!un.length) return
-    if (!user && !apiKey) { setError('Please sign in to use AI summaries.'); setShowAuth(true); return }
+    if (!user) { setError('Please sign in to use AI summaries.'); setShowAuth(true); return }
     setSumL(true); setError(null); let upd = [...papers]
     for (let i = 0; i < un.length; i++) {
       setLoadingMsg('Summarizing ' + (i + 1) + '/' + un.length + ': ' + un[i].title.slice(0, 35) + '...')
       try {
-        const s = await genSummary(apiKey, un[i])
-        upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p)
+        const s = await genSummary(apiKey, un[i]); upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p)
       } catch (e) {
         if (e.message?.includes('limit reached')) { setError(e.message); break }
-        // Fallback: create basic summary from abstract
         upd = upd.map(p => p.id === un[i].id ? { ...p, summary: { tldr: (p.abstract || '').slice(0, 100), tags: ['untagged'], key_contributions: [], methods: [], limitations: [], open_questions: [], key_citations_to_follow: [], relevance_to_medical_imaging: '' } } : p)
       }
     }
@@ -230,27 +200,23 @@ export default function App() {
 
   async function runGap() {
     if (papers.length < 2) { setError('Need 2+ papers'); return }
-    if (!user && !apiKey) { setError('Please sign in to use gap analysis.'); setShowAuth(true); return }
+    if (!user) { setError('Please sign in to use gap analysis.'); setShowAuth(true); return }
     setGapL(true); setError(null)
     try {
       const parsed = await genGap(apiKey, papers)
       setGap(parsed); setTab('gaps'); refreshUsage()
-    } catch (err) {
-      setError('Gap analysis failed: ' + (err.message || 'Unknown error'))
-    }
+    } catch (err) { setError('Gap analysis failed: ' + (err.message || 'Unknown error')) }
     finally { setGapL(false) }
   }
 
   async function genWeekly() {
     if (papers.length < 3) { setError('Need 3+ papers for reading suggestions.'); return }
-    if (!user && !apiKey) { setError('Please sign in for weekly reading suggestions.'); setShowAuth(true); return }
+    if (!user) { setError('Please sign in for weekly reading suggestions.'); setShowAuth(true); return }
     setWeeklyL(true); setError(null)
     try {
       const parsed = await genWeeklyRecs(apiKey, papers)
       parsed.generatedAt = new Date().toISOString()
-      setWeeklyRecs(parsed)
-      sv('rh_weekly', parsed)
-      refreshUsage()
+      setWeeklyRecs(parsed); sv('rh_weekly', parsed); refreshUsage()
     } catch (err) { setError('Weekly suggestions failed: ' + err.message) }
     finally { setWeeklyL(false) }
   }
@@ -260,10 +226,7 @@ export default function App() {
   function togStar(id) { setPapers(p => p.map(x => x.id === id ? { ...x, starred: !x.starred } : x)); if (selected?.id === id) setSelected(p => ({ ...p, starred: !p.starred })) }
   function updNotes(id, n) { setPapers(p => p.map(x => x.id === id ? { ...x, notes: n } : x)); if (selected?.id === id) setSelected(p => ({ ...p, notes: n })) }
   function updFigure(id, fig) {
-    // Warn if figure is very large (base64 images can be huge)
-    if (fig && fig.length > 2000000) {
-      if (!confirm('This image is large and may exceed browser storage limits. Continue?')) return
-    }
+    if (fig && fig.length > 2000000) { if (!confirm('This image is large and may exceed browser storage limits. Continue?')) return }
     setPapers(p => p.map(x => x.id === id ? { ...x, figure: fig } : x))
     if (selected?.id === id) setSelected(p => ({ ...p, figure: fig }))
   }
@@ -271,7 +234,6 @@ export default function App() {
   function spk(p) { if (speaking) { speechSynthesis.cancel(); setSpeaking(false); return }; const u = new SpeechSynthesisUtterance(p.title + '. ' + (p.summary?.tldr || '')); u.rate = 0.95; u.onend = () => setSpeaking(false); setSpeaking(true); speechSynthesis.speak(u) }
 
   const [showStarred, setShowStarred] = useState(false)
-
   const allTags = useMemo(() => [...new Set(papers.flatMap(p => p.summary?.tags || []))], [papers])
   const filtered = useMemo(() => papers.filter(p => {
     const ms = !search || p.title?.toLowerCase().includes(search.toLowerCase()) || p.summary?.tldr?.toLowerCase().includes(search.toLowerCase()) || p.authors?.some(a => a.toLowerCase().includes(search.toLowerCase()))
@@ -282,7 +244,6 @@ export default function App() {
   }), [papers, search, filterTags, showStarred, readFilter])
   const unsum = useMemo(() => papers.filter(p => !p.summary).length, [papers])
 
-  // ── Shared header + nav ────────────────────────────────────────────────
   const headerEl = (
     <>
       <header style={{ padding: '24px 32px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-primary) 100%)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -318,7 +279,6 @@ export default function App() {
   const settingsEl = <Settings show={showSet} onClose={() => setShowSet(false)} zUid={zUid} setZUid={setZUid} zKey={zKey} setZKey={setZKey} zotImp={zotImp} zotL={zotL} papers={papers} setPapers={setPapers} gap={gap} setGap={setGap} />
   const authEl = <AuthModal show={showAuth} onClose={() => setShowAuth(false)} user={user} usage={usage} onAuthChange={async () => { const u = await getUser(); setUser(u); if (u) { const us = await getUsage(); setUsage(us) } else setUsage(null) }} />
 
-  // ── Route views ────────────────────────────────────────────────────────
   if (tab === 'detail' && selected) {
     return (<div>{headerEl}<DetailView paper={selected} apiKey={apiKey} onBack={() => { speechSynthesis.cancel(); setSpeaking(false); setTab('library') }} onDelete={del} onToggleRead={togRead} onToggleStar={togStar} onUpdateNotes={updNotes} onUpdateFigure={updFigure} onUpdateSchematic={updSchematic} speaking={speaking} onSpeak={spk} />{settingsEl}{authEl}</div>)
   }
@@ -328,6 +288,5 @@ export default function App() {
   if (tab === 'gaps') {
     return (<div>{headerEl}<GapView papers={papers} gap={gap} gapL={gapL} onRunGap={runGap} />{settingsEl}{authEl}</div>)
   }
-
   return (<div>{headerEl}<LibraryView papers={papers} filtered={filtered} allTags={allTags} filterTags={filterTags} setFilterTags={setFilterTags} readFilter={readFilter} setReadFilter={setReadFilter} search={search} setSearch={setSearch} unsum={unsum} sumL={sumL} loadingMsg={loadingMsg} onSumAll={sumAll} onSelect={p => { setSelected(p); setTab('detail') }} onToggleStar={togStar} showStarred={showStarred} setShowStarred={setShowStarred} weeklyRecs={weeklyRecs} weeklyL={weeklyL} onGenWeekly={genWeekly} />{settingsEl}{authEl}</div>)
 }

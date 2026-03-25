@@ -5,58 +5,41 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// Get current session token
 export async function getToken() {
   const { data } = await supabase.auth.getSession()
   return data?.session?.access_token || null
 }
 
-// Get current user
 export async function getUser() {
   const { data } = await supabase.auth.getUser()
   return data?.user || null
 }
 
-// Sign up
 export async function signUp(email, password) {
   const { data, error } = await supabase.auth.signUp({ email, password })
   if (error) throw error
   return data
 }
 
-// Sign in
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) throw error
   return data
 }
 
-// Sign out — use local scope to avoid network dependency
 export async function signOut() {
-  try {
-    await supabase.auth.signOut({ scope: 'local' })
-  } catch {}
-  // Force clear all auth storage regardless
+  try { await supabase.auth.signOut({ scope: 'local' }) } catch {}
   try {
     Object.keys(localStorage).forEach(k => {
-      if (k.includes('supabase') || k.includes('sb-') || k.includes('auth-token')) {
-        localStorage.removeItem(k)
-      }
+      if (k.includes('supabase') || k.includes('sb-') || k.includes('auth-token')) localStorage.removeItem(k)
     })
   } catch {}
 }
 
-// Get usage for current user
 export async function getUsage() {
   const { data, error } = await supabase.from('usage').select('*').single()
   if (error) return null
   return data
 }
 
-// Free tier limits
-export const FREE_LIMITS = {
-  summaries: 5,
-  gaps: 2,
-  schematics: 3,
-  weekly: 2,
-}
+export const FREE_LIMITS = { summaries: 5, gaps: 2, schematics: 3, weekly: 2 }
