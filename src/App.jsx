@@ -255,7 +255,7 @@ export default function App() {
     </>
   )
 
-  const settingsEl = <Settings show={showSet} onClose={() => setShowSet(false)} apiKey={apiKey} setApiKey={setApiKey} zUid={zUid} setZUid={setZUid} zKey={zKey} setZKey={setZKey} zotImp={zotImp} zotL={zotL} papers={papers} setPapers={setPapers} gap={gap} setGap={setGap} />
+  const settingsEl = <Settings show={showSet} onClose={() => setShowSet(false)} zUid={zUid} setZUid={setZUid} zKey={zKey} setZKey={setZKey} zotImp={zotImp} zotL={zotL} papers={papers} setPapers={setPapers} gap={gap} setGap={setGap} />
   const authEl = <AuthModal show={showAuth} onClose={() => setShowAuth(false)} user={user} usage={usage} onAuthChange={async () => { const u = await getUser(); setUser(u); if (u) { const us = await getUsage(); setUsage(us) } else setUsage(null) }} />
 
   // ── Route views ────────────────────────────────────────────────────────

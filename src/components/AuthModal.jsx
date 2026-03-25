@@ -34,9 +34,11 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
   }
 
   async function handleSignOut() {
-    await signOut()
+    try { await signOut() } catch {}
+    // Force clear state regardless of signOut result
     onAuthChange()
     onClose()
+    window.location.reload()
   }
 
   // If user is logged in, show account info

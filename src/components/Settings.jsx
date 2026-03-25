@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { sv, AK, ZUK, ZKK } from '../utils'
+import { sv, ZUK, ZKK } from '../utils'
 
 function download(filename, content, type) {
   const blob = new Blob([content], { type })
@@ -43,16 +43,15 @@ function toCsv(papers) {
   return headers.join(',') + '\n' + rows.join('\n')
 }
 
-export default function Settings({ show, onClose, apiKey, setApiKey, zUid, setZUid, zKey, setZKey, zotImp, zotL, papers, setPapers, gap, setGap }) {
-  const [tAK, setTAK] = useState(apiKey)
+export default function Settings({ show, onClose, zUid, setZUid, zKey, setZKey, zotImp, zotL, papers, setPapers, gap, setGap }) {
   const [tZU, setTZU] = useState(zUid)
   const [tZK, setTZK] = useState(zKey)
   const [msg, setMsg] = useState('')
   const restoreRef = useRef(null)
 
   useEffect(() => {
-    if (show) { setTAK(apiKey); setTZU(zUid); setTZK(zKey); setMsg('') }
-  }, [show, apiKey, zUid, zKey])
+    if (show) { setTZU(zUid); setTZK(zKey); setMsg('') }
+  }, [show, zUid, zKey])
 
   if (!show) return null
 
@@ -112,16 +111,8 @@ export default function Settings({ show, onClose, apiKey, setApiKey, zUid, setZU
 
         {msg && <div style={{ padding: '8px 12px', background: '#0f1a15', border: '1px solid #1a3329', borderRadius: 6, fontSize: 12, color: 'var(--accent-green-light)', fontFamily: 'var(--mono)', marginBottom: 16 }}>{msg}</div>}
 
-        {/* API Key */}
-        <div style={{ marginBottom: 24 }}>
-          <div style={secHead('Anthropic API Key', 'var(--accent-green-light)')}>Anthropic API Key</div>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8, lineHeight: 1.5 }}>Get at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{ color: 'var(--accent-blue)' }}>console.anthropic.com</a></div>
-          <input value={tAK} onChange={e => setTAK(e.target.value)} placeholder="sk-ant-..." type="password" style={isty} />
-          <button onClick={() => { const clean = tAK.replace(/[^\x20-\x7E]/g, '').trim(); setApiKey(clean); sv(AK, clean); setTAK(clean) }} className="btn-primary" style={{ width: '100%', textAlign: 'center' }}>{apiKey ? '✓ Update' : 'Save Key'}</button>
-        </div>
-
         {/* Zotero */}
-        <div style={{ marginBottom: 24, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+        <div style={{ marginBottom: 24 }}>
           <div style={secHead('Zotero', 'var(--accent-blue)')}>Zotero</div>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8, lineHeight: 1.5 }}>Get API key at <a href="https://www.zotero.org/settings/keys" target="_blank" rel="noopener" style={{ color: 'var(--accent-blue)' }}>zotero.org/settings/keys</a></div>
           <label style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--mono)' }}>User ID</label>
