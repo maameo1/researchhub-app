@@ -18,3 +18,4 @@ STRICT RULES:
 10. Center boxes around y=160.`, 3000)
   return { schematic: svg.trim() }
 })
+

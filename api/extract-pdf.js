@@ -15,3 +15,4 @@ export default handler('summary', async (body) => {
   const txt = (d.content || []).map(b => b.text || '').join('').replace(/```json|```/g, '').trim()
   return { metadata: JSON.parse(txt) }
 })
+

@@ -43,3 +43,4 @@ export async function getUsage() {
 }
 
 export const FREE_LIMITS = { summaries: 5, gaps: 2, schematics: 3, weekly: 2 }
+

@@ -129,3 +129,4 @@ export default function DetailView({ paper, apiKey, onBack, onDelete, onToggleRe
     </div>
   )
 }
+

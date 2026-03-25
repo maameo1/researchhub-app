@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { PK, ZUK, ZKK, GK, gid, ld, sv, genSummary, genGap, genWeeklyRecs, extractPdf, parseBib, parseCsv } from './utils'
+import { PK, AK, ZUK, ZKK, GK, gid, ld, sv, genSummary, genGap, genWeeklyRecs, extractPdf, parseBib, parseCsv } from './utils'
 import { supabase, getUser, getUsage } from './supabase'
 import Settings from './components/Settings'
 import DetailView from './components/DetailView'
@@ -10,7 +10,7 @@ import AuthModal from './components/AuthModal'
 
 export default function App() {
   const [papers, setPapers] = useState(() => ld(PK, []))
-  const apiKey = '' // Always use server proxy — users don't need their own key
+  const [apiKey] = useState('') // Always proxy mode for deployed version
   const [zUid, setZUid] = useState(() => localStorage.getItem(ZUK) || '')
   const [zKey, setZKey] = useState(() => localStorage.getItem(ZKK) || '')
   const [input, setInput] = useState('')
@@ -40,6 +40,10 @@ export default function App() {
   const [usage, setUsage] = useState(null)
   const [showAuth, setShowAuth] = useState(false)
 
+  // Clean up old API key from localStorage
+  useEffect(() => { try { localStorage.removeItem(AK) } catch {} }, [])
+
+  // Check auth on load
   useEffect(() => {
     async function checkAuth() {
       try { const u = await getUser(); setUser(u); if (u) { const us = await getUsage(); setUsage(us) } } catch {}
@@ -47,7 +51,7 @@ export default function App() {
     checkAuth()
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const u = session?.user || null; setUser(u)
-      if (u) { const us = await getUsage(); setUsage(us) } else setUsage(null)
+      if (u) { try { const us = await getUsage(); setUsage(us) } catch {} } else setUsage(null)
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -63,16 +67,16 @@ export default function App() {
   }, [papers])
   useEffect(() => { if (gap) sv(GK, gap) }, [gap])
 
-  // ── Helper: fetch with 15s timeout ─────────────────────────────────────
+  // Helper: fetch with 15s timeout
   async function fetchWithTimeout(url, options) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
+    const timer = setTimeout(() => controller.abort(), 15000)
     try {
       const r = await fetch(url, { ...options, signal: controller.signal })
-      clearTimeout(timeout)
+      clearTimeout(timer)
       return r
     } catch (e) {
-      clearTimeout(timeout)
+      clearTimeout(timer)
       if (e.name === 'AbortError') throw new Error('Request timed out. Try pasting the paper title instead.')
       throw e
     }
@@ -85,7 +89,7 @@ export default function App() {
     try {
       let md = {}
       if (pdf) {
-        if (!user) { setError('Please sign in to use PDF import.'); setShowAuth(true); setLoading(false); return }
+        if (!user) { setError('Please sign in to upload PDFs.'); setShowAuth(true); setLoading(false); return }
         setLoadingMsg('Reading PDF...')
         const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = () => rej(new Error('Fail')); r.readAsDataURL(pdf) })
         setLoadingMsg('Extracting...')
@@ -93,39 +97,38 @@ export default function App() {
         md.source = 'PDF'; md.sourceId = pdf.name
       } else {
         const t = input.trim()
-        // DOI checked FIRST (before arXiv) — DOIs can contain arXiv-like number patterns
+        // IMPORTANT: Check DOI first — DOIs can contain arXiv-like number patterns
         const dm = t.match(/(10\.\d{4,}\/[^\s]+)/)
-        // arXiv only if no DOI found, standalone ID or arxiv URL
+        // Only match arXiv if no DOI found, and input looks like a standalone arXiv ID
         const am = !dm && t.match(/(?:arxiv\.org\/abs\/)?(\d{4}\.\d{4,5})(?:v\d+)?$/i)
 
         if (dm) {
-          setLoadingMsg('DOI...')
-          const r = await fetchWithTimeout('https://api.crossref.org/works/' + encodeURIComponent(dm[1]))
-          if (!r.ok) throw new Error('DOI not found in Crossref. Try pasting the paper title instead.')
-          const di = (await r.json()).message
-          md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] }
+          setLoadingMsg('Looking up DOI...')
+          const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'doi', query: dm[1] }) })
+          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'DOI not found. Try pasting the paper title instead.') }
+          const di = await r.json()
+          md = { title: di.title, abstract: di.abstract, authors: di.authors, published: di.published, venue: di.venue, source: 'DOI', sourceId: dm[1] }
         } else if (am) {
-          setLoadingMsg('arXiv...')
-          const r = await fetchWithTimeout('https://export.arxiv.org/api/query?id_list=' + am[1])
-          const x = new DOMParser().parseFromString(await r.text(), 'text/xml')
+          setLoadingMsg('Looking up arXiv...')
+          const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'arxiv', query: am[1] }) })
+          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'arXiv lookup failed') }
+          const data = await r.json()
+          const x = new DOMParser().parseFromString(data.xml, 'text/xml')
           const e = x.querySelector('entry')
           if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
           md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
         } else {
           setLoadingMsg('Searching...')
-          const r = await fetchWithTimeout('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue')
-          if (r.status === 429) throw new Error('Search rate limited. Wait a minute and try again.')
-          if (!r.ok) throw new Error('Search failed')
-          const d = await r.json()
-          if (!d.data?.length) throw new Error('No papers found. Try a different search term.')
-          const p = d.data[0]
-          md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId }
+          const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'search', query: t }) })
+          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'Search failed') }
+          const p = await r.json()
+          md = { title: p.title, abstract: p.abstract, authors: p.authors, published: p.published, venue: p.venue, source: 'Search', sourceId: p.sourceId }
         }
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
       // Auto-summarize only if signed in
       let sum = null
-      if (user) { try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary skipped:', e.message) } }
+      if (user) { try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary:', e.message) } }
       const np = { id: gid(), ...md, summary: sum, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
       setPapers(prev => [np, ...prev]); setInput(''); setPdf(null); if (fRef.current) fRef.current.value = ''
       setSelected(np); setTab('detail')
@@ -157,8 +160,8 @@ export default function App() {
       while (true) {
         const r = await fetch('https://api.zotero.org/users/' + zUid + '/items?format=json&limit=50&start=' + start + '&sort=dateModified&direction=desc', { headers: { 'Zotero-API-Key': zKey, 'Zotero-API-Version': '3' } })
         if (!r.ok) {
-          if (r.status === 403) throw new Error('Zotero 403 Forbidden - check your API key has read access')
-          if (r.status === 404) throw new Error('Zotero 404 - check your User ID is correct')
+          if (r.status === 403) throw new Error('Zotero 403 - check your API key has read access')
+          if (r.status === 404) throw new Error('Zotero 404 - check your User ID')
           throw new Error('Zotero error ' + r.status)
         }
         const items = await r.json(); if (!items.length) break
@@ -167,7 +170,7 @@ export default function App() {
       }
       const types = new Set(['journalArticle', 'conferencePaper', 'preprint', 'book', 'bookSection', 'thesis', 'report', 'manuscript', 'document'])
       const zi = all.filter(i => types.has(i.data?.itemType))
-      setZotMsg('Found ' + zi.length + ' papers out of ' + all.length + ' items. Checking duplicates...')
+      setZotMsg('Found ' + zi.length + ' papers. Checking duplicates...')
       const ex = new Set(papers.map(p => p.title?.toLowerCase().trim())); const nw = []; let skipped = 0
       for (const item of zi) {
         const d = item.data; if (!d.title) continue
@@ -176,7 +179,7 @@ export default function App() {
         nw.push({ id: gid(), title: d.title, authors: (d.creators || []).filter(c => c.creatorType === 'author').map(c => ((c.firstName || '') + ' ' + (c.lastName || '')).trim()), abstract: d.abstractNote || '', published: d.date || '', venue: d.publicationTitle || d.proceedingsTitle || d.bookTitle || '', source: 'Zotero', sourceId: d.DOI || d.key, url: d.url || '', summary: null, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null, starred: false })
       }
       if (nw.length) setPapers(prev => [...nw, ...prev])
-      setZotMsg('Imported ' + nw.length + ' new papers' + (skipped > 0 ? ' (' + skipped + ' duplicates skipped)' : '') + '. Total library: ' + (papers.length + nw.length))
+      setZotMsg('Imported ' + nw.length + ' new papers' + (skipped > 0 ? ' (' + skipped + ' duplicates skipped)' : ''))
       setTimeout(() => setZotMsg(''), 10000)
     } catch (err) { setError('Zotero failed: ' + err.message) }
     finally { setZotL(false) }
@@ -189,7 +192,8 @@ export default function App() {
     for (let i = 0; i < un.length; i++) {
       setLoadingMsg('Summarizing ' + (i + 1) + '/' + un.length + ': ' + un[i].title.slice(0, 35) + '...')
       try {
-        const s = await genSummary(apiKey, un[i]); upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p)
+        const s = await genSummary(apiKey, un[i])
+        upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p)
       } catch (e) {
         if (e.message?.includes('limit reached')) { setError(e.message); break }
         upd = upd.map(p => p.id === un[i].id ? { ...p, summary: { tldr: (p.abstract || '').slice(0, 100), tags: ['untagged'], key_contributions: [], methods: [], limitations: [], open_questions: [], key_citations_to_follow: [], relevance_to_medical_imaging: '' } } : p)
@@ -226,7 +230,7 @@ export default function App() {
   function togStar(id) { setPapers(p => p.map(x => x.id === id ? { ...x, starred: !x.starred } : x)); if (selected?.id === id) setSelected(p => ({ ...p, starred: !p.starred })) }
   function updNotes(id, n) { setPapers(p => p.map(x => x.id === id ? { ...x, notes: n } : x)); if (selected?.id === id) setSelected(p => ({ ...p, notes: n })) }
   function updFigure(id, fig) {
-    if (fig && fig.length > 2000000) { if (!confirm('This image is large and may exceed browser storage limits. Continue?')) return }
+    if (fig && fig.length > 2000000) { if (!confirm('This image is large. Continue?')) return }
     setPapers(p => p.map(x => x.id === id ? { ...x, figure: fig } : x))
     if (selected?.id === id) setSelected(p => ({ ...p, figure: fig }))
   }
@@ -234,6 +238,7 @@ export default function App() {
   function spk(p) { if (speaking) { speechSynthesis.cancel(); setSpeaking(false); return }; const u = new SpeechSynthesisUtterance(p.title + '. ' + (p.summary?.tldr || '')); u.rate = 0.95; u.onend = () => setSpeaking(false); setSpeaking(true); speechSynthesis.speak(u) }
 
   const [showStarred, setShowStarred] = useState(false)
+
   const allTags = useMemo(() => [...new Set(papers.flatMap(p => p.summary?.tags || []))], [papers])
   const filtered = useMemo(() => papers.filter(p => {
     const ms = !search || p.title?.toLowerCase().includes(search.toLowerCase()) || p.summary?.tldr?.toLowerCase().includes(search.toLowerCase()) || p.authors?.some(a => a.toLowerCase().includes(search.toLowerCase()))
@@ -244,6 +249,7 @@ export default function App() {
   }), [papers, search, filterTags, showStarred, readFilter])
   const unsum = useMemo(() => papers.filter(p => !p.summary).length, [papers])
 
+  // ── Header ─────────────────────────────────────────────────────────────
   const headerEl = (
     <>
       <header style={{ padding: '24px 32px 16px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-primary) 100%)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -288,5 +294,7 @@ export default function App() {
   if (tab === 'gaps') {
     return (<div>{headerEl}<GapView papers={papers} gap={gap} gapL={gapL} onRunGap={runGap} />{settingsEl}{authEl}</div>)
   }
+
   return (<div>{headerEl}<LibraryView papers={papers} filtered={filtered} allTags={allTags} filterTags={filterTags} setFilterTags={setFilterTags} readFilter={readFilter} setReadFilter={setReadFilter} search={search} setSearch={setSearch} unsum={unsum} sumL={sumL} loadingMsg={loadingMsg} onSumAll={sumAll} onSelect={p => { setSelected(p); setTab('detail') }} onToggleStar={togStar} showStarred={showStarred} setShowStarred={setShowStarred} weeklyRecs={weeklyRecs} weeklyL={weeklyL} onGenWeekly={genWeekly} />{settingsEl}{authEl}</div>)
 }
+

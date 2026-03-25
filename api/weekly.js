@@ -12,3 +12,4 @@ Return ONLY valid JSON:
 {"from_library":[{"title":"exact title","reason":"why","priority":"high/medium"}],"new_suggestions":[{"search_query":"query","topic":"topic","reason":"why"}],"theme_of_the_week":"theme","reading_order_tip":"tip"}`, 1500)
   return { weekly: JSON.parse(txt) }
 })
+

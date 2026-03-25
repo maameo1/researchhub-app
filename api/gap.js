@@ -12,3 +12,4 @@ export default handler('gap', async (body) => {
   const txt = await callClaude('You are a research gap analyst. Analyze these ' + papers.length + ' papers.\n\n' + sm + '\n\nReturn ONLY valid JSON:\n{"themes":["..."],"gaps":["..."],"contradictions":["..."],"suggested_directions":["..."],"missing_baselines":["..."],"suggested_search_queries":["..."]}', 1200)
   return { gap: JSON.parse(txt) }
 })
+
