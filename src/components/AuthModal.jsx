@@ -34,13 +34,7 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
   }
 
   async function handleSignOut() {
-    try { await signOut() } catch {}
-    // Force clear all Supabase auth from localStorage
-    try {
-      Object.keys(localStorage).filter(k => k.includes('supabase') || k.includes('sb-')).forEach(k => localStorage.removeItem(k))
-    } catch {}
-    onAuthChange()
-    onClose()
+    await signOut()
     window.location.reload()
   }
 

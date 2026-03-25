@@ -31,10 +31,19 @@ export async function signIn(email, password) {
   return data
 }
 
-// Sign out
+// Sign out — use local scope to avoid network dependency
 export async function signOut() {
-  const { error } = await supabase.auth.signOut()
-  if (error) throw error
+  try {
+    await supabase.auth.signOut({ scope: 'local' })
+  } catch {}
+  // Force clear all auth storage regardless
+  try {
+    Object.keys(localStorage).forEach(k => {
+      if (k.includes('supabase') || k.includes('sb-') || k.includes('auth-token')) {
+        localStorage.removeItem(k)
+      }
+    })
+  } catch {}
 }
 
 // Get usage for current user
