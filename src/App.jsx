@@ -104,25 +104,40 @@ export default function App() {
 
         if (dm) {
           setLoadingMsg('Looking up DOI...')
-          const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'doi', query: dm[1] }) })
-          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'DOI not found. Try pasting the paper title instead.') }
-          const di = await r.json()
-          md = { title: di.title, abstract: di.abstract, authors: di.authors, published: di.published, venue: di.venue, source: 'DOI', sourceId: dm[1] }
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), 20000)
+          try {
+            const r = await fetch('https://api.crossref.org/works/' + encodeURIComponent(dm[1]), { signal: controller.signal })
+            clearTimeout(timeout)
+            if (!r.ok) throw new Error('DOI not found in Crossref')
+            const di = (await r.json()).message
+            md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] }
+          } catch (e) { clearTimeout(timeout); throw new Error(e.name === 'AbortError' ? 'DOI lookup timed out. Try pasting the paper title instead.' : e.message) }
         } else if (am) {
           setLoadingMsg('Looking up arXiv...')
-          const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'arxiv', query: am[1] }) })
-          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'arXiv lookup failed') }
-          const data = await r.json()
-          const x = new DOMParser().parseFromString(data.xml, 'text/xml')
-          const e = x.querySelector('entry')
-          if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
-          md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
+          try {
+            const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'arxiv', query: am[1] }) })
+            if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'arXiv lookup failed') }
+            const data = await r.json()
+            const x = new DOMParser().parseFromString(data.xml, 'text/xml')
+            const e = x.querySelector('entry')
+            if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
+            md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
+          } catch (e) { if (e.message.includes('not found')) throw e; throw new Error('arXiv lookup failed. Try pasting the paper title instead.') }
         } else {
           setLoadingMsg('Searching...')
-          const r = await fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'search', query: t }) })
-          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'Search failed') }
-          const p = await r.json()
-          md = { title: p.title, abstract: p.abstract, authors: p.authors, published: p.published, venue: p.venue, source: 'Search', sourceId: p.sourceId }
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), 15000)
+          try {
+            const r = await fetch('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue', { signal: controller.signal })
+            clearTimeout(timeout)
+            if (r.status === 429) throw new Error('Search rate limited. Wait a minute and try again.')
+            if (!r.ok) throw new Error('Search failed')
+            const d = await r.json()
+            if (!d.data?.length) throw new Error('No papers found. Try a different search term.')
+            const p = d.data[0]
+            md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId }
+          } catch (e) { clearTimeout(timeout); throw new Error(e.name === 'AbortError' ? 'Search timed out. Try a shorter term.' : e.message) }
         }
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
