@@ -68,7 +68,7 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
             </div>
           )}
           {!isPro && (
-            <a href="https://buy.stripe.com/bJe7sE4CBbiAcR50zS7AI00" target="_blank" rel="noopener" style={{ display: 'block', textAlign: 'center', padding: '12px 20px', background: 'var(--accent-green)', color: '#fff', borderRadius: 8, textDecoration: 'none', fontSize: 14, fontWeight: 500, marginBottom: 16, fontFamily: 'var(--sans)' }}>
+            <a href="https://buy.stripe.com/4gMbIUc53cmE8AP82k7AI01" target="_blank" rel="noopener" style={{ display: 'block', textAlign: 'center', padding: '12px 20px', background: 'var(--accent-green)', color: '#fff', borderRadius: 8, textDecoration: 'none', fontSize: 14, fontWeight: 500, marginBottom: 16, fontFamily: 'var(--sans)' }}>
               Upgrade to Pro — $8/month
             </a>
           )}
