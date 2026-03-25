@@ -93,10 +93,48 @@ export default function App() {
         md = await extractPdf(apiKey, b64)
         md.source = 'PDF'; md.sourceId = pdf.name
       } else {
-        const t = input.trim(), am = t.match(/(\d{4}\.\d{4,5})/), dm = t.match(/(10\.\d{4,}\/[^\s]+)/)
-        if (am) { setLoadingMsg('arXiv...'); const r = await fetch('https://export.arxiv.org/api/query?id_list=' + am[1]); const x = new DOMParser().parseFromString(await r.text(), 'text/xml'); const e = x.querySelector('entry'); if (!e) throw new Error('Not found'); md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] } }
-        else if (dm) { setLoadingMsg('DOI...'); const r = await fetch('https://api.crossref.org/works/' + encodeURIComponent(dm[1])); if (!r.ok) throw new Error('DOI not found'); const di = (await r.json()).message; md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] } }
-        else { setLoadingMsg('Searching...'); const r = await fetch('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue'); const d = await r.json(); if (!d.data?.length) throw new Error('Not found'); const p = d.data[0]; md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId } }
+        const t = input.trim()
+        // Check DOI first (before arXiv, because DOIs can contain arXiv-like number patterns)
+        const dm = t.match(/(10\.\d{4,}\/[^\s]+)/)
+        // Only match arXiv if no DOI found, and input looks like a standalone arXiv ID or arxiv URL
+        const am = !dm && t.match(/(?:arxiv\.org\/abs\/)?(\d{4}\.\d{4,5})(?:v\d+)?$/i)
+
+        if (dm) {
+          setLoadingMsg('DOI...')
+          try {
+            const r = await fetch('https://api.crossref.org/works/' + encodeURIComponent(dm[1]))
+            if (!r.ok) throw new Error('DOI not found in Crossref')
+            const di = (await r.json()).message
+            md = { title: (di.title || ['?'])[0], abstract: (di.abstract || '').replace(/<[^>]+>/g, ''), authors: (di.author || []).map(a => ((a.given || '') + ' ' + (a.family || '')).trim()), published: di.published?.['date-parts']?.[0]?.join('-') || '', venue: (di['container-title'] || [''])[0], source: 'DOI', sourceId: dm[1] }
+          } catch (e) {
+            throw new Error('DOI lookup failed: ' + e.message + '. Try pasting the paper title instead.')
+          }
+        } else if (am) {
+          setLoadingMsg('arXiv...')
+          try {
+            const r = await fetch('https://export.arxiv.org/api/query?id_list=' + am[1])
+            if (!r.ok) throw new Error('arXiv API error')
+            const x = new DOMParser().parseFromString(await r.text(), 'text/xml')
+            const e = x.querySelector('entry')
+            if (!e || !e.querySelector('title')) throw new Error('Paper not found on arXiv')
+            md = { title: e.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim() || '', abstract: e.querySelector('summary')?.textContent?.trim() || '', authors: [...e.querySelectorAll('author name')].map(n => n.textContent), published: e.querySelector('published')?.textContent?.slice(0, 10) || '', source: 'arXiv', sourceId: am[1] }
+          } catch (e) {
+            throw new Error('arXiv lookup failed: ' + e.message + '. Try pasting the paper title instead.')
+          }
+        } else {
+          setLoadingMsg('Searching...')
+          try {
+            const r = await fetch('https://api.semanticscholar.org/graph/v1/paper/search?query=' + encodeURIComponent(t) + '&limit=1&fields=title,abstract,authors,year,externalIds,venue')
+            if (r.status === 429) throw new Error('Search rate limited. Wait a minute and try again.')
+            if (!r.ok) throw new Error('Search failed')
+            const d = await r.json()
+            if (!d.data?.length) throw new Error('No papers found. Try a different search term.')
+            const p = d.data[0]
+            md = { title: p.title, abstract: p.abstract || '', authors: (p.authors || []).map(a => a.name), published: p.year ? String(p.year) : '', venue: p.venue || '', source: 'Search', sourceId: p.externalIds?.DOI || p.paperId }
+          } catch (e) {
+            throw new Error(e.message.includes('rate') ? e.message : 'Search failed: ' + e.message)
+          }
+        }
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
       let sum = null; try { sum = await genSummary(apiKey, md) } catch {}
