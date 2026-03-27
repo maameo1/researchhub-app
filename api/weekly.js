@@ -1,5 +1,4 @@
 export const config = { runtime: 'edge' }
-
 import { callClaude, edgeHandler } from './_helpers.js'
 
 export default edgeHandler('weekly', async (body) => {

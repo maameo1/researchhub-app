@@ -1,5 +1,4 @@
 export const config = { runtime: 'edge' }
-
 import { callClaudeWithDoc, edgeHandler } from './_helpers.js'
 
 export default edgeHandler('summary', async (body) => {

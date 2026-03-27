@@ -2,10 +2,9 @@ import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
-
 const FREE_LIMITS = { summary: 5, gap: 2, schematic: 3, weekly: 2 }
 
-const corsHeaders = {
+const cors = {
   'Content-Type': 'application/json',
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -14,7 +13,7 @@ const corsHeaders = {
 
 export async function callClaude(prompt, maxTokens = 1500) {
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) throw new Error('Server misconfigured')
+  if (!key) throw new Error('Server misconfigured — no API key')
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
@@ -27,7 +26,7 @@ export async function callClaude(prompt, maxTokens = 1500) {
 
 export async function callClaudeWithDoc(content, maxTokens = 1500) {
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) throw new Error('Server misconfigured')
+  if (!key) throw new Error('Server misconfigured — no API key')
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
@@ -39,7 +38,7 @@ export async function callClaudeWithDoc(content, maxTokens = 1500) {
 }
 
 async function verifyAndGetUsage(token) {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error('Server misconfigured — missing Supabase config')
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error('Server misconfigured — missing Supabase')
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: 'Bearer ' + token } }
   })
@@ -58,7 +57,6 @@ function checkLimit(usage, actionType) {
   if (limit !== undefined && current >= limit) {
     throw new Error('Free tier limit reached (' + current + '/' + limit + ' ' + actionType + 's). Upgrade to Pro for unlimited access.')
   }
-  return true
 }
 
 async function incrementUsage(supabase, userId, actionType) {
@@ -68,34 +66,24 @@ async function incrementUsage(supabase, userId, actionType) {
   await supabase.from('usage').update({ [countField]: newCount, updated_at: new Date().toISOString() }).eq('user_id', userId)
 }
 
-// Edge Runtime handler — gets 30s timeout on Vercel free plan (vs 10s for serverless)
+// Edge handler — 30s on Vercel Hobby (vs 10s serverless)
 export function edgeHandler(actionType, fn) {
   return async (req) => {
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 200, headers: corsHeaders })
-    }
-    if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders })
-    }
+    if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: cors })
+    if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: cors })
     try {
-      const authHeader = req.headers.get('authorization') || ''
-      const token = authHeader.replace('Bearer ', '').trim()
+      const token = (req.headers.get('authorization') || '').replace('Bearer ', '').trim()
       if (!token) throw new Error('Login required. Please sign in to use AI features.')
-
       const { user, usage, supabase } = await verifyAndGetUsage(token)
       checkLimit(usage, actionType)
-
       const body = await req.json()
       const result = await fn(body)
-
       await incrementUsage(supabase, user.id, actionType)
-
-      return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders })
+      return new Response(JSON.stringify(result), { status: 200, headers: cors })
     } catch (err) {
-      console.error('API error:', err.message)
       const status = err.message.includes('Not authenticated') || err.message.includes('Login required') ? 401
         : err.message.includes('limit reached') ? 403 : 500
-      return new Response(JSON.stringify({ error: err.message }), { status, headers: corsHeaders })
+      return new Response(JSON.stringify({ error: err.message }), { status, headers: cors })
     }
   }
 }

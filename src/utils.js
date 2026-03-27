@@ -44,7 +44,7 @@ export async function callAI(key, prompt, mt) {
   throw new Error('Use the specific API functions (genSummaryProxy, etc.) for proxy mode')
 }
 
-// Proxy helper — calls /api/ routes with auth token
+// Proxy helper — calls /api/ routes with auth token and timeout
 async function proxyCall(endpoint, body) {
   // Get auth token
   let token = null
@@ -54,19 +54,32 @@ async function proxyCall(endpoint, body) {
   } catch {}
   if (!token) throw new Error('Please sign in to use AI features.')
 
-  const r = await fetch('/api/' + endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + token,
-    },
-    body: JSON.stringify(body),
-  })
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}))
-    throw new Error(e.error || 'Server error ' + r.status)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 25000) // 25s timeout
+
+  try {
+    const r = await fetch('/api/' + endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    if (!r.ok) {
+      // Try to parse JSON error, but handle HTML 504 pages gracefully
+      let msg = 'Server error ' + r.status
+      try { const e = await r.json(); msg = e.error || msg } catch {}
+      throw new Error(msg)
+    }
+    return r.json()
+  } catch (e) {
+    clearTimeout(timeout)
+    if (e.name === 'AbortError') throw new Error('Request timed out. The server may be busy — try again.')
+    throw e
   }
-  return r.json()
 }
 
 // Summary — works with key (direct) or without (proxy)

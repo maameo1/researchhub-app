@@ -91,28 +91,23 @@ export default function App() {
       if (type === 'doi') {
         url = 'https://api.openalex.org/works/doi:' + encodeURIComponent(query) + '?mailto=researchhub@app.com'
       } else if (type === 'arxiv') {
-        // OpenAlex indexes arXiv papers; try the arXiv DOI first, then search
         url = 'https://api.openalex.org/works/doi:10.48550/arXiv.' + query + '?mailto=researchhub@app.com'
       } else {
         url = 'https://api.openalex.org/works?search=' + encodeURIComponent(query) + '&per_page=1&mailto=researchhub@app.com'
       }
       let r = await fetch(url, { signal: controller.signal })
-      // If arXiv DOI didn't resolve, fall back to title search
+      // If arXiv DOI didn't resolve, fall back to title search on OpenAlex
       if (!r.ok && type === 'arxiv') {
         r = await fetch('https://api.openalex.org/works?search=' + encodeURIComponent(query) + '&per_page=3&mailto=researchhub@app.com', { signal: controller.signal })
         if (r.ok) {
           const d = await r.json()
-          const match = d.results?.find(w => {
-            const ids = w.ids || {}
-            return ids.openalex && (JSON.stringify(ids).includes(query))
-          }) || d.results?.[0]
+          const match = d.results?.find(w => JSON.stringify(w.ids || {}).includes(query)) || d.results?.[0]
           if (match) return parseOpenAlexWork(match, 'arXiv', query)
         }
         throw new Error('Paper not found. Try pasting the full title instead.')
       }
       if (!r.ok) throw new Error(type === 'doi' ? 'DOI not found. Check the DOI or try the paper title.' : 'No results found.')
       const d = await r.json()
-      // Search endpoint returns { results: [...] }, direct lookup returns the work object
       const work = d.results ? d.results[0] : d
       if (!work || !work.title) throw new Error('No papers found. Try a different search term.')
       const source = type === 'doi' ? 'DOI' : type === 'arxiv' ? 'arXiv' : 'Search'
@@ -126,12 +121,10 @@ export default function App() {
   }
 
   function parseOpenAlexWork(work, source, sourceId) {
-    // Reconstruct abstract from inverted index
     let abstract = ''
     if (work.abstract_inverted_index) {
-      const idx = work.abstract_inverted_index
       const words = []
-      for (const [word, positions] of Object.entries(idx)) {
+      for (const [word, positions] of Object.entries(work.abstract_inverted_index)) {
         for (const pos of positions) words[pos] = word
       }
       abstract = words.filter(Boolean).join(' ')
@@ -154,21 +147,18 @@ export default function App() {
     try {
       let md = {}
       if (pdf) {
+        if (!user) { setError('Please sign in to use PDF import.'); setShowAuth(true); setLoading(false); return }
         setLoadingMsg('Reading PDF...')
         const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = () => rej(new Error('Fail')); r.readAsDataURL(pdf) })
-        setLoadingMsg('Extracting...')
+        setLoadingMsg('Extracting with AI...')
         md = await extractPdf(apiKey, b64)
         md.source = 'PDF'; md.sourceId = pdf.name
       } else {
         const t = input.trim()
-        // Check DOI first (before arXiv, because DOIs can contain arXiv-like number patterns)
         const dm = t.match(/(10\.\d{4,}\/[^\s]+)/)
-        // Only match arXiv if no DOI found, and input looks like a standalone arXiv ID or arxiv URL
         const am = !dm && t.match(/(?:arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?$/i)
-        // Also detect full URLs (https://doi.org/..., https://arxiv.org/abs/..., etc.)
         const urlDoi = !dm && !am && t.match(/doi\.org\/(10\.\d{4,}\/[^\s]+)/i)
         const urlArxiv = !dm && !am && !urlDoi && t.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/i)
-
         const effectiveDoi = dm ? dm[1] : urlDoi ? urlDoi[1] : null
         const effectiveArxiv = am ? am[1] : urlArxiv ? urlArxiv[1] : null
 
@@ -184,10 +174,14 @@ export default function App() {
         }
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
+
+      // Auto-summarize if signed in (non-blocking — paper gets added regardless)
       let sum = null
       if (user) {
-        try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary failed:', e.message) }
+        setLoadingMsg('Summarizing...')
+        try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary skipped:', e.message) }
       }
+
       const np = { id: gid(), ...md, summary: sum, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
       setPapers(prev => [np, ...prev]); setInput(''); setPdf(null); if (fRef.current) fRef.current.value = ''
       setSelected(np); setTab('detail')
