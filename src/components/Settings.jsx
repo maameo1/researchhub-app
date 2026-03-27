@@ -128,22 +128,24 @@ export default function Settings({ show, onClose, zUid, setZUid, zKey, setZKey, 
         {/* Backup & Restore */}
         <div style={{ marginBottom: 24, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
           <div style={secHead('Backup & Restore', 'var(--accent-purple)')}>Backup & Restore</div>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 12, lineHeight: 1.5 }}>Save a full backup of your library including summaries, notes, figures, schematics, and gap analysis.</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 12, lineHeight: 1.5 }}>Save a full backup of your library including summaries, notes, figures, schematics, and gap analysis. Restore anytime.</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
             <button onClick={exportBackup} className="btn-primary" style={{ flex: 1, textAlign: 'center', background: '#1a1a2e', color: 'var(--accent-purple)', borderColor: '#2a2a4a' }}>📦 Export Full Backup</button>
             <button onClick={() => restoreRef.current?.click()} className="btn-sec" style={{ flex: 1, textAlign: 'center' }}>📂 Restore from Backup</button>
           </div>
           <input ref={restoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) importBackup(e.target.files[0]) }} style={{ display: 'none' }} />
-          <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>Backup includes: {papers.length} papers, {papers.filter(p => p.summary).length} summaries, {papers.filter(p => p.notes).length} with notes</div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>Backup includes: {papers.length} papers, {papers.filter(p => p.summary).length} summaries, {papers.filter(p => p.notes).length} with notes, {papers.filter(p => p.figure).length} figures</div>
         </div>
 
         {/* Export */}
         <div style={{ marginBottom: 24, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
           <div style={secHead('Export Citations & Notes', '#5bc4b0')}>Export Citations & Notes</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 12, lineHeight: 1.5 }}>Export your library for use in other tools. BibTeX for citation managers, CSV for spreadsheets.</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={exportBibtex} className="btn-sec" style={{ flex: 1, textAlign: 'center' }}>📝 Export BibTeX</button>
             <button onClick={exportCsv} className="btn-sec" style={{ flex: 1, textAlign: 'center' }}>📊 Export CSV</button>
           </div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', marginTop: 6 }}>CSV includes: titles, authors, abstracts, TLDR, tags, methods, limitations, notes, read status</div>
         </div>
 
         {/* Reset */}
@@ -154,4 +156,3 @@ export default function Settings({ show, onClose, zUid, setZUid, zKey, setZKey, 
     </div>
   )
 }
-

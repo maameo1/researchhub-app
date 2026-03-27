@@ -8,7 +8,6 @@ export default function DetailView({ paper, apiKey, onBack, onDelete, onToggleRe
   const [genL, setGenL] = useState(false)
 
   async function handleGenSchematic() {
-    if (!apiKey) { alert('Add API key in ⚙ Settings first.'); return }
     setGenL(true)
     try {
       const svg = await genSchematic(apiKey, p)
@@ -129,4 +128,3 @@ export default function DetailView({ paper, apiKey, onBack, onDelete, onToggleRe
     </div>
   )
 }
-

@@ -1,6 +1,8 @@
-import { callClaude, handler } from './_helpers.js'
+export const config = { runtime: 'edge' }
 
-export default handler('gap', async (body) => {
+import { callClaude, edgeHandler } from './_helpers.js'
+
+export default edgeHandler('gap', async (body) => {
   const { papers } = body
   if (!papers || papers.length < 2) throw new Error('Need 2+ papers')
   const sm = papers.slice(0, 20).map((p, i) => {
@@ -12,4 +14,3 @@ export default handler('gap', async (body) => {
   const txt = await callClaude('You are a research gap analyst. Analyze these ' + papers.length + ' papers.\n\n' + sm + '\n\nReturn ONLY valid JSON:\n{"themes":["..."],"gaps":["..."],"contradictions":["..."],"suggested_directions":["..."],"missing_baselines":["..."],"suggested_search_queries":["..."]}', 1200)
   return { gap: JSON.parse(txt) }
 })
-

@@ -1,6 +1,8 @@
-import { callClaude, handler } from './_helpers.js'
+export const config = { runtime: 'edge' }
 
-export default handler('weekly', async (body) => {
+import { callClaude, edgeHandler } from './_helpers.js'
+
+export default edgeHandler('weekly', async (body) => {
   const { readRecently, unread, allTags } = body
   const txt = await callClaude(`You are a PhD research reading advisor. Suggest a focused weekly reading plan.
 RECENTLY READ (${(readRecently || []).length}):
@@ -12,4 +14,3 @@ Return ONLY valid JSON:
 {"from_library":[{"title":"exact title","reason":"why","priority":"high/medium"}],"new_suggestions":[{"search_query":"query","topic":"topic","reason":"why"}],"theme_of_the_week":"theme","reading_order_tip":"tip"}`, 1500)
   return { weekly: JSON.parse(txt) }
 })
-

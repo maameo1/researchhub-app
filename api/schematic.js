@@ -1,6 +1,8 @@
-import { callClaude, handler } from './_helpers.js'
+export const config = { runtime: 'edge' }
 
-export default handler('schematic', async (body) => {
+import { callClaude, edgeHandler } from './_helpers.js'
+
+export default edgeHandler('schematic', async (body) => {
   const { title, abstract, methods, contributions } = body
   if (!title) throw new Error('Title required')
   const svg = await callClaude(`You are an expert scientific diagram designer. Create a CLEAN, PROFESSIONAL SVG pipeline/architecture diagram for this paper.
@@ -18,4 +20,3 @@ STRICT RULES:
 10. Center boxes around y=160.`, 3000)
   return { schematic: svg.trim() }
 })
-
