@@ -34,7 +34,15 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
   }
 
   async function handleSignOut() {
-    await signOut()
+    try { await signOut() } catch {}
+    // Force clear all auth storage regardless
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.includes('supabase') || k.includes('sb-') || k.includes('auth-token')) {
+          localStorage.removeItem(k)
+        }
+      })
+    } catch {}
     window.location.reload()
   }
 

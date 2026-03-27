@@ -175,16 +175,21 @@ export default function App() {
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
 
-      // Auto-summarize if signed in (non-blocking — paper gets added regardless)
-      let sum = null
-      if (user) {
-        setLoadingMsg('Summarizing...')
-        try { sum = await genSummary(apiKey, md) } catch (e) { console.warn('Auto-summary skipped:', e.message) }
-      }
-
-      const np = { id: gid(), ...md, summary: sum, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
+      // Add paper immediately — don't wait for summary
+      const newId = gid()
+      const np = { id: newId, ...md, summary: null, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
       setPapers(prev => [np, ...prev]); setInput(''); setPdf(null); if (fRef.current) fRef.current.value = ''
       setSelected(np); setTab('detail')
+      setLoading(false); setLoadingMsg('')
+
+      // Auto-summarize in background (non-blocking)
+      if (user) {
+        genSummary(apiKey, md).then(sum => {
+          setPapers(prev => prev.map(p => p.id === newId ? { ...p, summary: sum } : p))
+          setSelected(prev => prev?.id === newId ? { ...prev, summary: sum } : prev)
+        }).catch(e => console.warn('Auto-summary skipped:', e.message))
+      }
+      return // early return — we already set loading=false above
     } catch (err) { setError(err.message) }
     finally { setLoading(false); setLoadingMsg('') }
   }
