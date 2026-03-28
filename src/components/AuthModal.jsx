@@ -34,7 +34,7 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
   }
 
   function handleSignOut() {
-    // Completely synchronous — no supabase call, no await, cannot hang
+    // Completely synchronous — no supabase call, cannot hang
     try {
       Object.keys(localStorage).forEach(k => {
         if (k.includes('supabase') || k.includes('sb-') || k.includes('auth-token')) {
@@ -42,7 +42,8 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
         }
       })
     } catch (e) { console.error('localStorage clear failed:', e) }
-    window.location.reload()
+    // Delay reload slightly so it doesn't race with React re-render
+    setTimeout(() => { window.location.href = window.location.pathname }, 100)
   }
 
   // If user is logged in, show account info

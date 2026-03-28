@@ -175,24 +175,12 @@ export default function App() {
       }
       if (papers.some(p => p.title?.toLowerCase() === md.title?.toLowerCase())) { setError('Already in library.'); setLoading(false); return }
 
-      // Add paper immediately — don't wait for summary
+      // Add paper immediately
       const newId = gid()
       const np = { id: newId, ...md, summary: null, addedAt: new Date().toISOString(), notes: '', readStatus: 'unread', figure: null, schematic: null }
       setPapers(prev => [np, ...prev]); setInput(''); setPdf(null); if (fRef.current) fRef.current.value = ''
       setSelected(np); setTab('detail')
-      setLoading(false); setLoadingMsg('')
-
-      // Auto-summarize in background (non-blocking)
-      if (user) {
-        genSummary(apiKey, md).then(sum => {
-          setPapers(prev => prev.map(p => p.id === newId ? { ...p, summary: sum } : p))
-          setSelected(prev => prev?.id === newId ? { ...prev, summary: sum } : prev)
-        }).catch(e => {
-          console.warn('Auto-summary failed:', e.message)
-          setError('Auto-summary failed: ' + e.message + '. Use ⚡ Summarize All to retry.')
-        })
-      }
-      return // early return — we already set loading=false above
+      return
     } catch (err) { setError(err.message) }
     finally { setLoading(false); setLoadingMsg('') }
   }
