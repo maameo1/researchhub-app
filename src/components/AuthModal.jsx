@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { signUp, signIn, signOut, FREE_LIMITS } from '../supabase'
+import { supabase, signUp, signIn, FREE_LIMITS } from '../supabase'
 
 export default function AuthModal({ show, onClose, user, usage, onAuthChange }) {
   const [mode, setMode] = useState('login') // login | signup
@@ -34,8 +34,8 @@ export default function AuthModal({ show, onClose, user, usage, onAuthChange }) 
   }
 
   async function handleSignOut() {
-    try { await signOut() } catch {}
-    // Force clear all auth storage regardless
+    // Don't await supabase — it can hang. Just clear storage and reload.
+    supabase.auth.signOut({ scope: 'local' }).catch(() => {})
     try {
       Object.keys(localStorage).forEach(k => {
         if (k.includes('supabase') || k.includes('sb-') || k.includes('auth-token')) {
