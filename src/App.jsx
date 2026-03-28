@@ -187,7 +187,10 @@ export default function App() {
         genSummary(apiKey, md).then(sum => {
           setPapers(prev => prev.map(p => p.id === newId ? { ...p, summary: sum } : p))
           setSelected(prev => prev?.id === newId ? { ...prev, summary: sum } : prev)
-        }).catch(e => console.warn('Auto-summary skipped:', e.message))
+        }).catch(e => {
+          console.warn('Auto-summary failed:', e.message)
+          setError('Auto-summary failed: ' + e.message + '. Use ⚡ Summarize All to retry.')
+        })
       }
       return // early return — we already set loading=false above
     } catch (err) { setError(err.message) }

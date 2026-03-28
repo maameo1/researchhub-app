@@ -5,10 +5,17 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// Get current session token
+// Get current session token — with timeout to prevent hanging
 export async function getToken() {
-  const { data } = await supabase.auth.getSession()
-  return data?.session?.access_token || null
+  try {
+    const result = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Auth session timeout')), 5000))
+    ])
+    return result?.data?.session?.access_token || null
+  } catch {
+    return null
+  }
 }
 
 // Get current user

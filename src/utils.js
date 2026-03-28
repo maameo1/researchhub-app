@@ -46,16 +46,15 @@ export async function callAI(key, prompt, mt) {
 
 // Proxy helper — calls /api/ routes with auth token and timeout
 async function proxyCall(endpoint, body) {
-  // Get auth token
   let token = null
   try {
     const { getToken } = await import('./supabase.js')
     token = await getToken()
   } catch {}
-  if (!token) throw new Error('Please sign in to use AI features.')
+  if (!token) throw new Error('Session expired. Please sign out and sign back in.')
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 25000) // 25s timeout
+  const timeout = setTimeout(() => controller.abort(), 25000)
 
   try {
     const r = await fetch('/api/' + endpoint, {
@@ -69,15 +68,15 @@ async function proxyCall(endpoint, body) {
     })
     clearTimeout(timeout)
     if (!r.ok) {
-      // Try to parse JSON error, but handle HTML 504 pages gracefully
       let msg = 'Server error ' + r.status
-      try { const e = await r.json(); msg = e.error || msg } catch {}
+      if (r.status === 401) msg = 'Session expired. Please sign out and sign back in.'
+      else { try { const e = await r.json(); msg = e.error || msg } catch {} }
       throw new Error(msg)
     }
     return r.json()
   } catch (e) {
     clearTimeout(timeout)
-    if (e.name === 'AbortError') throw new Error('Request timed out. The server may be busy — try again.')
+    if (e.name === 'AbortError') throw new Error('Request timed out (25s). Try again.')
     throw e
   }
 }
