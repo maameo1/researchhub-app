@@ -5,31 +5,16 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// Get current session token — auto-refreshes if expired
+// Get current session token — with timeout to prevent hanging
 export async function getToken() {
   try {
-    // First try: get cached session (instant, no network)
-    const { data } = await supabase.auth.getSession()
-    if (data?.session?.access_token) {
-      // Check if token is about to expire (within 60 seconds)
-      const expiresAt = data.session.expires_at
-      if (expiresAt && expiresAt * 1000 < Date.now() + 60000) {
-        // Token expired or expiring — refresh it
-        const { data: refreshed } = await Promise.race([
-          supabase.auth.refreshSession(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Refresh timeout')), 8000))
-        ])
-        return refreshed?.session?.access_token || data.session.access_token
-      }
-      return data.session.access_token
-    }
-    return null
+    const result = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Auth session timeout')), 5000))
+    ])
+    return result?.data?.session?.access_token || null
   } catch {
-    // Last resort: try getting whatever session exists
-    try {
-      const { data } = await supabase.auth.getSession()
-      return data?.session?.access_token || null
-    } catch { return null }
+    return null
   }
 }
 
