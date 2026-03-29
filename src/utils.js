@@ -44,28 +44,43 @@ export async function callAI(key, prompt, mt) {
   throw new Error('Use the specific API functions (genSummaryProxy, etc.) for proxy mode')
 }
 
-// Proxy helper — calls /api/ routes with auth token and timeout
+// Proxy helper — calls /api/ routes with auth token, auto-retries on 401
 async function proxyCall(endpoint, body) {
   let token = null
   try {
     const { getToken } = await import('./supabase.js')
     token = await getToken()
   } catch {}
-  if (!token) throw new Error('Session expired. Please sign out and sign back in.')
+  if (!token) throw new Error('Please sign in to use AI features.')
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 25000)
 
   try {
-    const r = await fetch('/api/' + endpoint, {
+    let r = await fetch('/api/' + endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token,
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
       body: JSON.stringify(body),
       signal: controller.signal,
     })
+
+    // If 401, try refreshing the token and retry once
+    if (r.status === 401) {
+      try {
+        const { supabase } = await import('./supabase.js')
+        const { data } = await supabase.auth.refreshSession()
+        const newToken = data?.session?.access_token
+        if (newToken) {
+          r = await fetch('/api/' + endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + newToken },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          })
+        }
+      } catch {}
+    }
+
     clearTimeout(timeout)
     if (!r.ok) {
       let msg = 'Server error ' + r.status
