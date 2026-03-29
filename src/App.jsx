@@ -238,7 +238,8 @@ export default function App() {
   }
 
   async function sumAll() {
-    const un = papers.filter(p => !p.summary); if (!un.length) return
+    // Include papers with no summary OR papers with fake fallback summary (only "untagged" tag)
+    const un = papers.filter(p => !p.summary || (p.summary.tags?.length === 1 && p.summary.tags[0] === 'untagged')); if (!un.length) return
     if (!user) { setError('Please sign in to use AI summaries.'); setShowAuth(true); return }
     setSumL(true); setError(null); let upd = [...papers]
     for (let i = 0; i < un.length; i++) {
@@ -248,8 +249,10 @@ export default function App() {
         upd = upd.map(p => p.id === un[i].id ? { ...p, summary: s } : p)
       } catch (e) {
         if (e.message?.includes('limit reached')) { setError(e.message); break }
-        // Fallback: create basic summary from abstract
-        upd = upd.map(p => p.id === un[i].id ? { ...p, summary: { tldr: (p.abstract || '').slice(0, 100), tags: ['untagged'], key_contributions: [], methods: [], limitations: [], open_questions: [], key_citations_to_follow: [], relevance_to_medical_imaging: '' } } : p)
+        // Show the actual error — don't hide it with a fallback
+        setError('Summary failed: ' + e.message)
+        console.error('Summary error for "' + un[i].title.slice(0, 40) + '":', e.message)
+        break // stop trying more papers if one fails
       }
     }
     setPapers(upd); setSumL(false); setLoadingMsg(''); refreshUsage()
